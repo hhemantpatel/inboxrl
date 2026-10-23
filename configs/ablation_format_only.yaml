@@ -1,0 +1,4 @@
+# Ablation: train on the format reward only (weights over [total, format, match, empty, len]).
+base: configs/grpo_qwen05b_4gb.yaml
+reward_weights: [0.0, 1.0, 0.0, 0.0, 0.0]
+max_steps: 320

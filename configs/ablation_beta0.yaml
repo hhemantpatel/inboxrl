@@ -1,0 +1,4 @@
+# Ablation: no KL penalty to the reference policy.
+base: configs/grpo_qwen05b_4gb.yaml
+beta: 0.0
+max_steps: 320

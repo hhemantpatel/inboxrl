@@ -1,50 +1,7 @@
-# InboxRL: GRPO Training Configuration for 8GB-16GB VRAM (Kaggle T4 / Desktop RTX)
+# InboxRL: GRPO configuration for 8 GB+ GPUs (desktop RTX, Kaggle T4 16 GB).
+base: configs/grpo_qwen05b_4gb.yaml
 
-model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"
-output_dir: "checkpoints/run_8gb"
-final_adapter_dir: "checkpoints/final"
-log_csv_path: "results/logs/train_metrics.csv"
-
-# Precision & Memory
-load_in_4bit: false
-torch_dtype: "bfloat16"
-gradient_checkpointing: true
-
-# LoRA Configuration
-lora_r: 16
-lora_alpha: 32
-lora_dropout: 0.05
-target_modules:
-  - "q_proj"
-  - "k_proj"
-  - "v_proj"
-  - "o_proj"
-  - "gate_proj"
-  - "up_proj"
-  - "down_proj"
-
-# GRPO Generation & Batching
-num_generations: 4
-per_device_train_batch_size: 2
-gradient_accumulation_steps: 4
-max_prompt_length: 512
-max_completion_length: 192
-temperature: 0.9
-
-# Optimization & Hyperparameters
-learning_rate: 2.0e-5
-lr_scheduler_type: "cosine"
-warmup_steps: 50
-max_steps: 1500
-beta: 0.04
-
-# Curriculum & Data
-data_path: "data/synthetic/train.jsonl"
-val_data_path: "data/synthetic/val.jsonl"
-use_curriculum: true
-
-# Logging & Evaluation
-logging_steps: 10
-save_steps: 250
-eval_steps: 100
-seed: 42
+num_generations: 8              # bigger groups -> better advantage estimates
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 4  # 4 prompts x 8 generations per step
+gradient_checkpointing: false

@@ -1,0 +1,4 @@
+# Ablation: shuffled L1-L5 mixture from step 0.
+base: configs/grpo_qwen05b_4gb.yaml
+use_curriculum: false
+max_steps: 320

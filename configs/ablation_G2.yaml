@@ -1,0 +1,4 @@
+# Ablation: group size 2 instead of 4 (same number of completions per step).
+base: configs/grpo_qwen05b_4gb.yaml
+num_generations: 2
+max_steps: 320

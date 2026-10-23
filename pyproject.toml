@@ -1,7 +1,7 @@
 [project]
 name = "inboxrl"
 version = "0.1.0"
-description = "Add your description here"
+description = "InboxRL: pure-RL (GRPO) training of a small LM to extract calendar events from institute emails"
 readme = "README.md"
 authors = [
     { name = "@patelhemant.7509", email = "patelhemant.7509@gmail.com" }
@@ -16,19 +16,25 @@ dependencies = [
     "pandas>=3.1.0",
     "peft>=0.21.2",
     "pydantic>=2.14.1",
-    "pytest>=9.1.1",
     "python-dateutil>=3.0.0",
     "pyyaml>=6.0.3",
     "rapidfuzz>=3.14.6",
     "scipy>=1.18.1",
+    "tensorboard>=2.20.0",
     "torch>=2.14.1",
     "tqdm>=4.70.1",
     "transformers>=5.20.2",
     "trl>=1.16.0",
 ]
 
+[project.optional-dependencies]
+qlora = ["bitsandbytes>=0.48.0"]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1"]
+
 [project.scripts]
-inboxrl = "inboxrl:main"
+inboxrl = "inboxrl.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]

@@ -1,53 +1,53 @@
-# InboxRL: GRPO Training Configuration for 4GB VRAM (RTX 3050 Laptop)
+# InboxRL: GRPO configuration for a 4 GB GPU (e.g. RTX 3050 laptop).
+# Precision is chosen automatically: bf16 on Ampere+ GPUs, fp16 on older ones (T4), fp32 on CPU.
 
 model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"
-output_dir: "checkpoints/run_4gb"
-final_adapter_dir: "checkpoints/final"
-log_csv_path: "results/logs/train_metrics.csv"
+runs_dir: "runs"
 
-# Quantization & Memory
-load_in_4bit: true
-torch_dtype: "bfloat16"
+# Memory
+load_in_4bit: false          # 0.5B fits in bf16; set true (+ `uv sync --extra qlora`) only if you hit OOM
 gradient_checkpointing: true
+optim: "adamw_torch"         # "adamw_8bit" needs the qlora extra
 
-# LoRA Configuration
+# LoRA
 lora_r: 16
 lora_alpha: 32
 lora_dropout: 0.05
-target_modules:
-  - "q_proj"
-  - "k_proj"
-  - "v_proj"
-  - "o_proj"
-  - "gate_proj"
-  - "up_proj"
-  - "down_proj"
+target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
-# GRPO Generation & Batching
+# GRPO rollout / batching: 4 prompts x 4 generations = 16 completions per optimizer step
 num_generations: 4
-per_device_train_batch_size: 1
+per_device_train_batch_size: 4
 gradient_accumulation_steps: 4
-max_prompt_length: 512
+max_prompt_tokens: 640
 max_completion_length: 192
 temperature: 0.9
 
-# Optimization & Hyperparameters
+# Optimisation
 learning_rate: 2.0e-5
 lr_scheduler_type: "cosine"
 warmup_steps: 50
-max_steps: 1200
-beta: 0.04  # KL penalty coefficient against reference model
+max_steps: 800               # set after timing the smoke test (target a 4-6 h main run)
+beta: 0.04                   # KL penalty to the frozen base policy
+epsilon: 0.2                 # PPO-style clipping
+loss_type: "dapo"            # token-level normalisation (TRL default); the report's equation matches this
 
-# Curriculum & Data
+# Reward: weights over [total, format, match, empty, len]. Only R drives the advantage; the rest is logged.
+reward_weights: [1.0, 0.0, 0.0, 0.0, 0.0]
+
+# Data and curriculum
 data_path: "data/synthetic/train.jsonl"
 val_data_path: "data/synthetic/val.jsonl"
+real_train_path: "data/real/real_train.jsonl"   # used only if the file exists
+real_mix_fraction: 0.1
 use_curriculum: true
-curriculum_stage1_steps: 400  # L1 and L2 first
-curriculum_stage2_steps: 800  # L1, L2, L3
-# remaining steps include all L1-L5
+curriculum_stage1_steps: 250     # L1-L2 only, then the full L1-L5 mixture
+curriculum_stage1_levels: [1, 2]
 
-# Logging & Evaluation
-logging_steps: 10
-save_steps: 200
+# Logging / evaluation
+logging_steps: 5
+log_completions: true
+save_steps: 100
 eval_steps: 100
-seed: 42
+eval_samples: 32
+seed: 0
