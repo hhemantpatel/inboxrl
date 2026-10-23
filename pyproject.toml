@@ -1,0 +1,35 @@
+[project]
+name = "inboxrl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "@patelhemant.7509", email = "patelhemant.7509@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.15.0",
+    "datasets>=5.1.0",
+    "dateparser>=1.4.3",
+    "icalendar>=7.3.0",
+    "matplotlib>=3.11.2",
+    "pandas>=3.1.0",
+    "peft>=0.21.2",
+    "pydantic>=2.14.1",
+    "pytest>=9.1.1",
+    "python-dateutil>=3.0.0",
+    "pyyaml>=6.0.3",
+    "rapidfuzz>=3.14.6",
+    "scipy>=1.18.1",
+    "torch>=2.14.1",
+    "tqdm>=4.70.1",
+    "transformers>=5.20.2",
+    "trl>=1.16.0",
+]
+
+[project.scripts]
+inboxrl = "inboxrl:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"

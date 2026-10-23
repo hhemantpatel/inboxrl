@@ -1,0 +1,34 @@
+{
+  "total_samples": 300,
+  "valid_json_count": 300,
+  "valid_json_ratio": 1.0,
+  "mean_reward": 1.3614068510135016,
+  "total_pred_events": 184,
+  "total_gold_events": 292,
+  "true_positive_events": 145,
+  "event_precision": 0.7880434782608695,
+  "event_recall": 0.4965753424657534,
+  "event_f1": 0.6092436974789915,
+  "date_match_ratio": 0.967391304347826,
+  "time_match_ratio": 0.5489130434782609,
+  "type_match_ratio": 0.5380434782608695,
+  "mean_title_similarity": 0.658089883191672,
+  "no_event_samples": 41,
+  "no_event_correct": 41,
+  "no_event_accuracy": 1.0,
+  "hallucination_rate_on_empty": 0.0,
+  "level_f1": {
+    "1": 1.0,
+    "2": 0.3888888888888889,
+    "3": 0.24561403508771928,
+    "4": 0.2978723404255319,
+    "5": 1.0
+  },
+  "level_rewards": {
+    "1": 2.1713118493556975,
+    "2": 0.8777164320151011,
+    "3": 0.5140887439250946,
+    "4": 1.573318933447202,
+    "5": 1.670598296324412
+  }
+}

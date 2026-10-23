@@ -1,0 +1,53 @@
+# InboxRL: GRPO Training Configuration for 4GB VRAM (RTX 3050 Laptop)
+
+model_name_or_path: "Qwen/Qwen2.5-0.5B-Instruct"
+output_dir: "checkpoints/run_4gb"
+final_adapter_dir: "checkpoints/final"
+log_csv_path: "results/logs/train_metrics.csv"
+
+# Quantization & Memory
+load_in_4bit: true
+torch_dtype: "bfloat16"
+gradient_checkpointing: true
+
+# LoRA Configuration
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+target_modules:
+  - "q_proj"
+  - "k_proj"
+  - "v_proj"
+  - "o_proj"
+  - "gate_proj"
+  - "up_proj"
+  - "down_proj"
+
+# GRPO Generation & Batching
+num_generations: 4
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 4
+max_prompt_length: 512
+max_completion_length: 192
+temperature: 0.9
+
+# Optimization & Hyperparameters
+learning_rate: 2.0e-5
+lr_scheduler_type: "cosine"
+warmup_steps: 50
+max_steps: 1200
+beta: 0.04  # KL penalty coefficient against reference model
+
+# Curriculum & Data
+data_path: "data/synthetic/train.jsonl"
+val_data_path: "data/synthetic/val.jsonl"
+use_curriculum: true
+curriculum_stage1_steps: 400  # L1 and L2 first
+curriculum_stage2_steps: 800  # L1, L2, L3
+# remaining steps include all L1-L5
+
+# Logging & Evaluation
+logging_steps: 10
+save_steps: 200
+eval_steps: 100
+seed: 42
