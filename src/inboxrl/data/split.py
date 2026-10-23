@@ -11,7 +11,7 @@ from pathlib import Path
 def split_data(
     input_file: Path,
     out_dir: Path,
-    test_ratio: float = 0.7,
+    n_test: int = 60,
     seed: int = 42,
 ) -> None:
     with open(input_file, "r", encoding="utf-8") as f:
@@ -20,7 +20,8 @@ def split_data(
     rng = random.Random(seed)
     rng.shuffle(records)
 
-    n_test = int(len(records) * test_ratio)
+    if len(records) <= n_test:
+        raise ValueError(f"Need more than {n_test} labelled emails to keep a {n_test}-email test set")
     test_records = records[:n_test]
     train_records = records[n_test:]
 
@@ -42,11 +43,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Split labeled emails into train and test sets.")
     parser.add_argument("--input", type=str, default="data/real/labeled.jsonl")
     parser.add_argument("--out-dir", type=str, default="data/real")
-    parser.add_argument("--test-ratio", type=float, default=0.7)
+    parser.add_argument("--n-test", type=int, default=60, help="Held-out real test emails (never trained on)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    split_data(Path(args.input), Path(args.out_dir), args.test_ratio, args.seed)
+    split_data(Path(args.input), Path(args.out_dir), args.n_test, args.seed)
 
 
 if __name__ == "__main__":

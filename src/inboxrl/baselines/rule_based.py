@@ -40,53 +40,46 @@ class RuleBasedExtractor:
     ) -> list[Event]:
         """Extract events using rules."""
         full_text = f"{subject}\n{body}"
-        
-        # Check if email is explicitly a non-event notification
-        no_event_cues = ["marks published", "grades published", "maintenance completed", "feedback", "reading material"]
-        if any(cue in full_text.lower() for cue in no_event_cues) and "deadline" not in full_text.lower():
-            # Likely no event
-            return []
 
-        # Reference date for relative parsing
         try:
             ref_dt = datetime.strptime(received_date_str, "%Y-%m-%d")
-        except Exception:
-            ref_dt = datetime.now()
+        except ValueError:
+            return []
 
-        # Classify event type
+        # Classify event type by the first keyword group that appears
         detected_type = "event"
         for etype, keywords in self.type_keywords.items():
             if any(kw in full_text.lower() for kw in keywords):
                 detected_type = etype
                 break
 
-        # Search for venue
         loc_match = self.venue_pattern.search(full_text)
         location = loc_match.group(1).strip() if loc_match else None
 
-        # Search for time
         time_match = self.time_pattern.search(full_text)
         start_time = normalize_time_str(time_match.group(1)) if time_match else None
 
-        # Detect candidate dates using regex expressions
-        # Patterns: DD Month YYYY, DD/MM/YYYY, tomorrow, next [Day], this [Day]
+        # Candidate dates: absolute formats and simple relative expressions
+        month = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"
+        weekday = r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)"
         date_candidates = re.findall(
-            r"\b(?:\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*(?:\d{4})?|\d{1,2}/\d{1,2}/\d{4}|tomorrow|day after tomorrow|this (?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)|next (?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))\b",
+            rf"\b(?:\d{{1,2}}(?:st|nd|rd|th)?\s+{month}(?:,?\s*\d{{4}})?"
+            rf"|{month}\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s*\d{{4}})?"
+            rf"|\d{{1,2}}/\d{{1,2}}/\d{{4}}|\d{{4}}-\d{{2}}-\d{{2}}"
+            rf"|today|tomorrow|day after tomorrow|(?:this|next) {weekday})\b",
             full_text,
             re.IGNORECASE,
         )
 
-        if not date_candidates:
-            return []
-
-        # Take the most prominent date (often the last mentioned in case of extensions)
+        # Keep the last date that is not in the past (later mentions usually override earlier ones,
+        # e.g. "postponed from 3 Nov to 7 Nov"); no future date -> no event.
         best_date_str = None
         for candidate in reversed(date_candidates):
             parsed = dateparser.parse(
                 candidate,
-                settings={"RELATIVE_BASE": ref_dt, "PREFER_DATES_FROM": "future"},
+                settings={"RELATIVE_BASE": ref_dt, "PREFER_DATES_FROM": "future", "DATE_ORDER": "DMY"},
             )
-            if parsed:
+            if parsed and parsed.date() >= ref_dt.date():
                 best_date_str = parsed.strftime("%Y-%m-%d")
                 break
 

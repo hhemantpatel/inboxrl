@@ -6,14 +6,17 @@ import argparse
 import email
 import json
 import mailbox
-from datetime import datetime
 from email.header import decode_header
 from pathlib import Path
 from typing import Any, Optional
 
+from zoneinfo import ZoneInfo
+
 from dateutil import parser as date_parser
 
-from inboxrl.data.anonymize import anonymize_record
+from inboxrl.data.anonymize import anonymize_record, load_names
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def decode_str(header_val: Any) -> str:
@@ -48,7 +51,7 @@ def extract_body(msg: email.message.Message) -> str:
                 if payload:
                     # Simple strip tags
                     import re
-                    html = payload.decode("utf-8", errors="replace")
+                    html = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
                     return re.sub(r"<[^>]+>", " ", html)
     else:
         payload = msg.get_payload(decode=True)
@@ -58,51 +61,58 @@ def extract_body(msg: email.message.Message) -> str:
     return ""
 
 
+def received_date_ist(date_header: str) -> Optional[str]:
+    """Date header -> YYYY-MM-DD in IST (relative dates in the email are relative to the reader's day)."""
+    try:
+        dt = date_parser.parse(date_header)
+    except (ValueError, OverflowError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=IST)
+    return dt.astimezone(IST).date().isoformat()
+
+
 def parse_mbox_file(
     mbox_path: Path,
     sender_filter: Optional[str] = "@iitj.ac.in",
     limit: Optional[int] = None,
+    anonymize: bool = True,
+    names_file: Optional[Path] = None,
 ) -> list[dict[str, Any]]:
-    """Parse messages from an mbox file into structured dictionary records."""
-    mbox = mailbox.mbox(str(mbox_path))
-    records = []
-    count = 0
+    """Parse messages from an mbox file into records {id, received_date, sender, subject, body}."""
+    names = load_names(names_file)
+    records: list[dict[str, Any]] = []
+    skipped = {"sender": 0, "date": 0, "body": 0, "error": 0}
 
-    for idx, msg in enumerate(mbox):
+    for idx, msg in enumerate(mailbox.mbox(str(mbox_path))):
         try:
             sender = decode_str(msg.get("From", ""))
             if sender_filter and sender_filter not in sender.lower():
+                skipped["sender"] += 1
                 continue
-
-            subject = decode_str(msg.get("Subject", ""))
-            date_raw = msg.get("Date", "")
-            
-            # Parse received date
-            try:
-                parsed_dt = date_parser.parse(date_raw)
-                received_date = parsed_dt.date().isoformat()
-            except Exception:
-                received_date = datetime.now().date().isoformat()
-
+            received_date = received_date_ist(msg.get("Date", ""))
+            if received_date is None:
+                skipped["date"] += 1
+                continue
             body = extract_body(msg).strip()
             if not body:
+                skipped["body"] += 1
                 continue
-
             record = {
-                "id": f"real_mbox_{idx:05d}",
+                "id": f"real_{idx:05d}",
                 "received_date": received_date,
                 "sender": sender,
-                "subject": subject,
+                "subject": decode_str(msg.get("Subject", "")),
                 "body": body,
             }
-            record = anonymize_record(record)
-            records.append(record)
-            count += 1
-            if limit and count >= limit:
+            records.append(anonymize_record(record, names) if anonymize else record)
+            if limit and len(records) >= limit:
                 break
-        except Exception:
-            continue
+        except Exception as e:  # malformed message: count it, keep going
+            skipped["error"] += 1
+            print(f"  message {idx}: {type(e).__name__}: {e}")
 
+    print(f"Parsed {len(records)} emails; skipped {skipped}")
     return records
 
 
@@ -112,9 +122,12 @@ def main() -> None:
     parser.add_argument("--out", type=str, default="data/real/raw_anonymized.jsonl")
     parser.add_argument("--filter", type=str, default="@iitj.ac.in")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--names-file", type=str, default="data/real/names_to_mask.txt",
+                        help="Private list of names to mask, one per line (gitignored)")
     args = parser.parse_args()
 
-    records = parse_mbox_file(Path(args.mbox), sender_filter=args.filter, limit=args.limit)
+    records = parse_mbox_file(Path(args.mbox), sender_filter=args.filter, limit=args.limit,
+                              names_file=Path(args.names_file))
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:

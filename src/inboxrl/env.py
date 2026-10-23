@@ -79,16 +79,20 @@ class EmailExtractionEnv:
             )
             # Use tokenizer chat template if available
             if hasattr(self.tokenizer, "apply_chat_template"):
-                self.prompt_tokens = self.tokenizer.apply_chat_template(
-                    messages, add_generation_prompt=True, tokenize=True
-                )
+                self.prompt_tokens = list(self.tokenizer.apply_chat_template(
+                    messages, add_generation_prompt=True, tokenize=True, return_dict=False
+                ))
             else:
                 text = f"{messages[0]['content']}\n\n{messages[1]['content']}"
                 self.prompt_tokens = self.tokenizer.encode(text)
         else:
             self.prompt_tokens = []
 
-        return list(self.generated_tokens)
+        return self.state()
+
+    def state(self) -> list[int]:
+        """s_t = prompt tokens (system + email + received date) followed by the tokens generated so far."""
+        return list(self.prompt_tokens) + list(self.generated_tokens)
 
     def step(self, action_token_id: int) -> StepResult:
         """Apply action (append token), check terminal condition, and compute reward."""
@@ -124,7 +128,7 @@ class EmailExtractionEnv:
             info["completion"] = completion_text
 
         return StepResult(
-            next_state=list(self.generated_tokens),
+            next_state=self.state(),
             reward=reward,
             done=done,
             info=info,

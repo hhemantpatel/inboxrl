@@ -28,6 +28,9 @@ def prompt_event(received_date: str) -> Event | None:
     time_input = input("Start Time [HH:MM 24hr or e.g. 17:00, 23:59] (Enter for null): ").strip()
     start_time = time_input if time_input else None
 
+    end_input = input("End Time [HH:MM 24hr] (Enter for null): ").strip()
+    end_time = end_input if end_input else None
+
     loc_input = input("Location/Venue (Enter for null): ").strip()
     location = loc_input if loc_input else None
 
@@ -37,6 +40,7 @@ def prompt_event(received_date: str) -> Event | None:
             type=etype,  # type: ignore
             date=date_input,
             start_time=start_time,
+            end_time=end_time,
             location=location,
         )
     except Exception as e:

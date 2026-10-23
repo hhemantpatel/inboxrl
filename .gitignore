@@ -34,18 +34,26 @@ env/
 # ML / Checkpoints / Logs
 checkpoints/*
 !checkpoints/final/
-runs/
+# Training runs: keep only the small logs; adapters and checkpoints stay local
+runs/**
+!runs/*/
+!runs/*/metrics.csv
+!runs/*/config.yaml
+runs/smoke/
 wandb/
-tensorboard_logs/
 *.pt
 *.bin
 *.safetensors
+!checkpoints/final/*.safetensors
+events.ics
 
 # Data & Privacy
 *.mbox
 *.eml
 data/raw/
 data/real/unlabeled/
+data/real/raw_anonymized.jsonl
+data/real/names_to_mask.txt
 *.kdbx
 *.key
 

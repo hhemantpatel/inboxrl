@@ -1,0 +1,45 @@
+{
+  "name": "random",
+  "split": "synth_test",
+  "total_samples": 300,
+  "valid_json_ratio": 1.0,
+  "mean_reward": 0.44395833333333334,
+  "total_pred_events": 300,
+  "total_gold_events": 306,
+  "true_positive_events": 0,
+  "event_precision": 0.0,
+  "event_recall": 0.0,
+  "event_f1": 0.0,
+  "event_f1_ci": [
+    0.0,
+    0.0
+  ],
+  "date_accuracy": 0.06862745098039216,
+  "date_accuracy_ci": [
+    0.04193239294144094,
+    0.10066808191808191
+  ],
+  "paired_date_acc": 0.08076923076923077,
+  "paired_time_acc": 0.10384615384615385,
+  "paired_type_acc": 0.2653846153846154,
+  "paired_title_f1": 0.0,
+  "exact_match_ratio": 0.0,
+  "no_event_samples": 40,
+  "no_event_accuracy": 0.0,
+  "no_event_invalid_rate": 0.0,
+  "hallucination_rate_on_empty": 1.0,
+  "level_f1": {
+    "1": 0.0,
+    "2": 0.0,
+    "3": 0.0,
+    "4": 0.0,
+    "5": 0.0
+  },
+  "level_rewards": {
+    "1": 0.46749999999999997,
+    "2": 0.4141666666666667,
+    "3": 0.47250000000000003,
+    "4": 0.38145833333333334,
+    "5": 0.4841666666666667
+  }
+}
