@@ -102,3 +102,99 @@ def test_hungarian_order_invariance():
     res = compute_reward_single(completion, gold)
     assert res.r_match >= 0.95
     assert res.num_matched == 2
+
+
+# ---------------------------------------------------------------------------
+# Reward-hacking guards
+# ---------------------------------------------------------------------------
+import json
+
+import pytest
+
+from inboxrl.rewards import has_text_outside_json, reward_func_total, title_token_f1
+
+GOLD_ONE = [
+    {
+        "title": "CSL3090 Assignment Submission",
+        "type": "deadline",
+        "date": "2026-11-05",
+        "start_time": "23:59",
+        "end_time": None,
+        "location": None,
+    }
+]
+
+
+def _pred(**overrides):
+    ev = dict(GOLD_ONE[0])
+    ev.update(overrides)
+    return json.dumps([ev])
+
+
+def test_short_title_exploit_is_not_worth_it():
+    perfect = compute_reward_single(_pred(), GOLD_ONE).total
+    one_letter = compute_reward_single(_pred(title="a"), GOLD_ONE).total
+    subset = compute_reward_single(_pred(title="Assignment"), GOLD_ONE).total
+    assert perfect == pytest.approx(2.5)
+    assert one_letter <= perfect - 0.45
+    assert one_letter < subset < perfect
+
+
+def test_wrong_date_loses_most_of_the_reward():
+    wrong_date = compute_reward_single(_pred(date="2026-01-01"), GOLD_ONE).total
+    assert wrong_date < 1.0
+    # ...but still beats giving up with [] so early exploration gets signal
+    assert wrong_date > compute_reward_single("[]", GOLD_ONE).total
+
+
+def test_prose_around_json_costs_at_least_quarter_point():
+    clean = compute_reward_single(_pred(), GOLD_ONE).total
+    chatty = compute_reward_single("Sure! Here you go: " + _pred() + " Hope it helps.", GOLD_ONE).total
+    assert clean - chatty >= 0.25
+
+
+def test_code_fence_is_not_penalized():
+    fenced = "```json\n" + _pred() + "\n```"
+    assert not has_text_outside_json(fenced)
+    assert compute_reward_single(fenced, GOLD_ONE).total == pytest.approx(2.5)
+
+
+def test_invalid_gold_raises():
+    with pytest.raises(ValueError):
+        compute_reward_single("[]", [{"title": "x", "type": "party", "date": "2026-13-01"}])
+
+
+def test_conversational_completions_are_accepted():
+    comps = [[{"role": "assistant", "content": _pred()}]]
+    assert reward_func_total(["p"], comps, gold=[GOLD_ONE]) == [pytest.approx(2.5)]
+
+
+def test_title_token_f1():
+    assert title_token_f1("CSL3090 Quiz 2", "CSL3090 Quiz 2") == 1.0
+    assert title_token_f1("", "CSL3090 Quiz 2") == 0.0
+    assert 0.0 < title_token_f1("Quiz", "CSL3090 Quiz 2") < 0.6
+
+
+def test_exploit_policies_lose_to_a_decent_policy_on_synthetic_data():
+    """Constant [] and 'copy every date' policies must score below an imperfect but honest policy."""
+    from inboxrl.data.synth import generate_dataset
+
+    data = generate_dataset(200, seed=7, split="train")
+
+    def mean_reward(policy):
+        return sum(compute_reward_single(policy(r), r["gold"]).total for r in data) / len(data)
+
+    def constant_empty(r):
+        return "[]"
+
+    def every_date(r):
+        # One event per distinct date mentioned anywhere (received date + all gold dates + a decoy)
+        dates = {r["received_date"]} | {g["date"] for g in r["gold"]}
+        return json.dumps([{"title": "Event", "type": "event", "date": d} for d in sorted(dates)])
+
+    def decent(r):
+        # Right dates, generic titles, no times or venues
+        return json.dumps([{"title": g["title"].split()[0], "type": g["type"], "date": g["date"]} for g in r["gold"]])
+
+    assert mean_reward(constant_empty) < mean_reward(decent)
+    assert mean_reward(every_date) < mean_reward(decent)
