@@ -378,6 +378,7 @@ def generate_dataset(
     num_samples: int,
     seed: int = 42,
     levels: Optional[list[int]] = None,
+    split: str = "train",
 ) -> list[dict[str, Any]]:
     """Generate a reproducible synthetic dataset with balanced levels."""
     rng = random.Random(seed)
@@ -387,7 +388,7 @@ def generate_dataset(
     dataset = []
     for i in range(num_samples):
         level = levels[i % len(levels)]
-        sample_id = f"synth_{seed}_{i:05d}"
+        sample_id = f"synth_{split}_{seed}_{i:05d}"
         sample = generate_sample(rng, sample_id, level)
         dataset.append(sample)
 
