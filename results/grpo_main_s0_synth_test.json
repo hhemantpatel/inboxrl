@@ -1,0 +1,45 @@
+{
+  "name": "grpo_main_s0",
+  "split": "synth_test",
+  "total_samples": 300,
+  "valid_json_ratio": 0.9933333333333333,
+  "mean_reward": 1.7582140592810452,
+  "total_pred_events": 298,
+  "total_gold_events": 306,
+  "true_positive_events": 212,
+  "event_precision": 0.7114093959731543,
+  "event_recall": 0.6928104575163399,
+  "event_f1": 0.6917293233082707,
+  "event_f1_ci": [
+    0.644100580270793,
+    0.7388059701492538
+  ],
+  "date_accuracy": 0.7418300653594772,
+  "date_accuracy_ci": [
+    0.6862745098039216,
+    0.7941176470588235
+  ],
+  "paired_date_acc": 0.8412698412698413,
+  "paired_time_acc": 0.8174603174603174,
+  "paired_type_acc": 0.9206349206349206,
+  "paired_title_f1": 0.9084126984126984,
+  "exact_match_ratio": 0.5433333333333333,
+  "no_event_samples": 40,
+  "no_event_accuracy": 0.825,
+  "no_event_invalid_rate": 0.025,
+  "hallucination_rate_on_empty": 0.15,
+  "level_f1": {
+    "1": 0.9387755102040817,
+    "2": 0.9259259259259259,
+    "3": 0.6857142857142857,
+    "4": 0.5263157894736842,
+    "5": 0.6545454545454545
+  },
+  "level_rewards": {
+    "1": 2.2451731601731603,
+    "2": 2.0164246031746034,
+    "3": 1.6206904761904759,
+    "4": 1.1894175384800385,
+    "5": 1.5482361766057418
+  }
+}

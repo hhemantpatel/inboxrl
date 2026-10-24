@@ -1,0 +1,2 @@
+run: main_s0
+config: see runs/main_s0/config.yaml
