@@ -28,10 +28,18 @@ def load_model(
     device: Optional[str] = None,
     merge_adapter: bool = True,
 ) -> Tuple[Any, Any]:
-    """Load a base model, optionally with a LoRA adapter.
+    """Load a base model, optionally fused with a trained LoRA adapter.
 
-    If `adapter_path` is given it must contain a trained adapter; we never silently
-    fall back to the base model, which would make "agent" results base-model results.
+    Architecture & Inference Optimization:
+        - LoRA Fusion: When `merge_adapter=True`, adapter weights Delta W = B * A are
+          linearly fused into the base model weights W = W_0 + (alpha/r) * B * A via
+          PEFT's `merge_and_unload()`. This eliminates adapter routing overhead during inference.
+        - Left Padding: `tokenizer.padding_side = 'left'` is critical for decoder-only architectures
+          (like Qwen) during batched autoregressive generation, ensuring the last token of each
+          prompt sits at the frontier of attention without trailing pad token interference.
+        - Strict Fallback Prevention: If `adapter_path` is specified, it MUST exist and contain
+          `adapter_config.json`. We never silently fall back to the base model, preventing
+          unintentional base-model evaluation masquerading as trained-agent evaluation.
     """
     device = device or default_device()
     if adapter_path is not None:
