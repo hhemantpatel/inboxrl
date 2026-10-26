@@ -1,10 +1,48 @@
 """GRPO reinforcement learning for calendar event extraction (pure RL, no SFT).
 
+Algorithmic Background (Group Relative Policy Optimization - GRPO):
+    Standard actor-critic RL algorithms (such as PPO) train a separate value network V_phi(s)
+    to estimate state values and baseline advantages A(s, a) = R - V_phi(s). For large language
+    models, maintaining a critic network of comparable size doubles memory footprint, making
+    RL fine-tuning infeasible on consumer GPUs (e.g., 4GB / 6GB VRAM).
+
+    GRPO (Shao et al., DeepSeekMath 2024) circumvents the critic by sampling a group of G
+    independent completions {o_1, o_2, ..., o_G} for each input prompt q from policy pi_theta.
+    Each completion is evaluated by reward function R(q, o_i). The advantage is then estimated
+    directly using intra-group normalization:
+        A_i = (R_i - mean({R_1, ..., R_G})) / (std({R_1, ..., R_G}) + eps)
+
+    The surrogate policy objective optimizes the clipped PPO objective regularized by a KL divergence
+    penalty against reference policy pi_ref:
+        L_GRPO(theta) = - E_{q, {o_i}} [ (1/G) sum_{i=1}^G min( r_i(theta) A_i, clip(r_i(theta), 1-eps, 1+eps) A_i )
+                                         - beta * D_KL(pi_theta || pi_ref) ]
+    where r_i(theta) = pi_theta(o_i | q) / pi_old(o_i | q).
+
+Pure RL Paradigm (No SFT Phase):
+    Unlike traditional RLHF pipelines that require initial Supervised Fine-Tuning (SFT) on
+    thousands of demonstrations, InboxRL trains directly from base instruction weights
+    (Qwen2.5-0.5B-Instruct) using low-rank adapters (PEFT LoRA). The model discovers valid
+    JSON syntax and schema compliance purely through the syntactic reward signal w_format * R_format.
+
+Curriculum Learning Dynamics:
+    1. Stage 1 (Steps 0 to curriculum_stage1_steps):
+       Restricted to easy emails (Levels 1 & 2: single-event emails with explicit dates like "2026-11-05").
+       This guarantees dense reward discovery early, preventing policy collapse into degenerate strings.
+    2. Stage 2 (Steps curriculum_stage1_steps to max_steps):
+       Opens up the full distribution (Levels 1 to 5: multi-event, relative dates, temporal distractors,
+       and non-event emails).
+    3. Empty Event Oversampling (no_event_fraction):
+       Pre-trained LLMs have a strong prior to generate text rather than empty lists `[]`. At the natural
+       15% rate, G=4 samples rarely contain `[]`, leading to zero variance (A_i = 0) and no gradient.
+       Oversampling no-event prompts increases the probability that at least one sample hits `[]`,
+       yielding high positive advantage that rapidly trains the policy to suppress hallucinations.
+
 Usage:
     python -m inboxrl.train_grpo --config configs/grpo_qwen05b_4gb.yaml --run-name main_s0 --seed 0 --promote
     python -m inboxrl.train_grpo --config configs/grpo_qwen05b_4gb.yaml --smoke-test
 
-Each run writes to runs/<run-name>/: adapter/, metrics.csv, config.yaml, tensorboard logs.
+Artifacts:
+    Each run writes to runs/<run-name>/: adapter/, metrics.csv, config.yaml, tensorboard logs.
 """
 
 from __future__ import annotations
