@@ -198,3 +198,35 @@ def test_exploit_policies_lose_to_a_decent_policy_on_synthetic_data():
 
     assert mean_reward(constant_empty) < mean_reward(decent)
     assert mean_reward(every_date) < mean_reward(decent)
+
+
+# ---------------------------------------------------------------- date verifier (v2 reward) ----
+
+def test_date_closeness_default_is_all_or_nothing():
+    exact = compute_reward_single(_pred(), GOLD_ONE).total
+    off1 = compute_reward_single(_pred(date="2026-11-06"), GOLD_ONE).total
+    off7 = compute_reward_single(_pred(date="2026-11-12"), GOLD_ONE).total
+    assert off1 == pytest.approx(off7)
+    assert exact > off1
+
+
+def test_date_closeness_orders_near_misses_but_never_beats_a_hit():
+    w = RewardWeights(date_closeness=0.5)
+    exact = compute_reward_single(_pred(), GOLD_ONE, weights=w).total
+    off1 = compute_reward_single(_pred(date="2026-11-06"), GOLD_ONE, weights=w).total
+    off7 = compute_reward_single(_pred(date="2026-11-12"), GOLD_ONE, weights=w).total
+    far = compute_reward_single(_pred(date="2027-01-01"), GOLD_ONE, weights=w).total
+    assert exact > off1 > off7 > far
+    assert off1 < 0.5 * exact  # a near miss earns well under half of a correct event
+
+
+def test_make_reward_funcs_matches_module_level_functions():
+    from inboxrl.rewards import make_reward_funcs
+
+    funcs = make_reward_funcs(RewardWeights())
+    comps = [_pred(), "[]", "not json"]
+    gold = [GOLD_ONE] * 3
+    assert funcs[0](["p"] * 3, comps, gold=gold) == reward_func_total(["p"] * 3, comps, gold=gold)
+    assert [f.__name__ for f in funcs] == [
+        "reward_func_total", "reward_func_format", "reward_func_match", "reward_func_empty", "reward_func_len",
+    ]

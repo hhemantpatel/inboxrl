@@ -32,6 +32,8 @@ def main() -> None:
     parser.add_argument("--splits", nargs="+", default=["synth_test", "real_test"])
     parser.add_argument("--no-llm", action="store_true", help="Skip the language-model baselines")
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--prompt-version", type=int, default=1, choices=[1, 2],
+                        help="2 = the v2 system prompt the grpo_v2 agent is trained with (results get a _v2 suffix)")
     args = parser.parse_args()
 
     splits = [s for s in args.splits if Path(SPLITS[s]).exists()]
@@ -40,17 +42,22 @@ def main() -> None:
         print(f"Skipping missing splits: {skipped}")
     data = {s: load_records(s) for s in splits}
 
-    for split, records in data.items():
-        run_evaluation(records, empty_extractor, "empty", split)
-        run_evaluation(records, random_extractor, "random", split)
-        run_evaluation(records, rule_extractor, "rule", split)
+    suffix = "" if args.prompt_version == 1 else f"_v{args.prompt_version}"
+    if args.prompt_version == 1:  # prompt-independent baselines
+        for split, records in data.items():
+            run_evaluation(records, empty_extractor, "empty", split)
+            run_evaluation(records, random_extractor, "random", split)
+            run_evaluation(records, rule_extractor, "rule", split)
 
     if args.no_llm:
         return
+    max_prompt = 640 if args.prompt_version == 1 else 768
     for name, mode, model_id in LLM_BASELINES:
-        extractor = model_extractor(mode, model_id, args.batch_size, max_new_tokens=192, max_prompt_tokens=640)
+        extractor = model_extractor(mode, model_id, args.batch_size, max_new_tokens=192 if args.prompt_version == 1 else 320,
+                                    max_prompt_tokens=max_prompt,
+                                    prompt_version=args.prompt_version)
         for split, records in data.items():
-            run_evaluation(records, extractor, name, split)
+            run_evaluation(records, extractor, name + suffix, split)
 
 
 if __name__ == "__main__":

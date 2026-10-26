@@ -1,0 +1,9 @@
+# v4: v2 settings (30% no-event prompts, default empty weight) with a strong KL anchor, beta 0.04 -> 0.3.
+# v2_s0: the base 0.5B + v2 prompt answers `[]` on 40/40 no-event emails (already right: zero-variance groups, no
+# gradient) but also on 169/260 event emails (penalised); that pressure leaked and erased `[]` everywhere (never
+# produced again after step 45). v3_s0 (50% no-event, w_empty 2) fell into the opposite attractor: `[]` for every email.
+# A larger beta penalises leaving the base policy on exactly the prompts where it is already correct.
+base: configs/grpo_v2.yaml
+beta: 0.3
+max_steps: 500
+curriculum_stage1_steps: 100

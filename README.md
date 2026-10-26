@@ -15,18 +15,18 @@ CSL3090 Artificial Intelligence, Assignment 2 (RL mini-project), IIT Jodhpur.
 
 | | |
 |---|---|
-| **State** $s_t$ | system prompt + email (sender, subject, body, received date $d_0$) + tokens generated so far; ≤ 640 prompt tokens, embedded as 896-d hidden states |
+| **State** $s_t$ | system prompt + email (sender, subject, body, received date $d_0$) + tokens generated so far; ≤ 768 prompt tokens, embedded as 896-d hidden states |
 | **Action** $a_t$ | next token from the vocabulary, $\lvert\mathcal V\rvert = 151{,}936$ |
-| **Transition** | deterministic append; episode ends at `<|im_end|>` or 192 tokens; $\gamma = 1$ |
+| **Transition** | deterministic append; episode ends at `<|im_end|>` or 320 tokens; $\gamma = 1$ |
 | **Reward** | sparse, terminal: $R = 0.5\,r_{fmt} + 2\,r_{match} + r_{empty} + 0.25\,r_{len} \in [-1.75, 2.5]$ |
-| **Algorithm** | GRPO (TRL `GRPOTrainer`), group size 4, KL $\beta = 0.04$ to the frozen base model, L1–L2 → L1–L5 curriculum |
+| **Algorithm** | GRPO (TRL `GRPOTrainer`), group size 8, KL $\beta = 0.15$ to the frozen base model, L1–L2 → L1–L5 curriculum, 40 % no-event prompts (final config `configs/grpo_v6.yaml`) |
 
 - $r_{fmt}$: +1 if the output is a JSON list that validates against the event schema, else −1 (and no match credit).
-- $r_{match}$: Hungarian matching between predicted and gold events; pair similarity = 0.35·date + gate·(0.20·time + 0.25·title-token-F1 + 0.10·type + 0.10·venue), where gate = 1 if the date is right and 0.25 otherwise. Normalised by $\max(|P|, |G|)$, so misses and hallucinations both cost reward.
+- $r_{match}$: Hungarian matching between predicted and gold events; pair similarity = 0.35·date + gate·(0.20·time + 0.25·title-token-F1 + 0.10·type + 0.10·venue), where gate = 1 if the date is right and 0.25 otherwise. The date term is a calendar-arithmetic verifier: 1 if exact, else 0.5·max(0, 1 − |Δdays|/14) (`reward_params.date_closeness`, on in the v2+ configs). Normalised by $\max(|P|, |G|)$, so misses and hallucinations both cost reward.
 - $r_{empty}$: +1 for `[]` on a no-event email, −1 for hallucinating there, −0.5 for `[]` when events exist.
 - $r_{len}$: −1 for any text around the JSON, −0.5 more beyond 800 characters.
 
-Details, equations and the two reward-hacking exploits we found and fixed are in `report/main.tex`.
+Details, equations, the two reward-hacking exploits we found and fixed, and the `[]`-collapse analysis are in `report/main.tex`.
 
 ---
 
@@ -39,7 +39,7 @@ Requires Python 3.12 and [`uv`](https://docs.astral.sh/uv/). Any CUDA GPU works;
 git clone https://github.com/hhemantpatel/inboxrl.git
 cd inboxrl
 uv sync                      # add `--extra qlora` only if you want 4-bit loading / 8-bit Adam
-uv run pytest                # 40+ tests: schema, reward exploits, generator, env, data tools
+uv run pytest                # 50 tests: schema, reward exploits, generator, env, data tools
 uv run python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name() if torch.cuda.is_available() else '')"
 ```
 
@@ -70,36 +70,31 @@ also check `curriculum_stage1_steps` (default 250). Use `configs/grpo_qwen05b_8g
 uv run python -m inboxrl.baselines.run_baselines              # empty, random, rule, 0.5B zero/3-shot, 1.5B zero-shot
 ```
 
-**4. Main runs (3 seeds), then evaluate each:**
+**4. Final configuration, 3 seeds, then evaluate each** (about 3.5 h per run on a 6 GB GPU):
 ```bash
 for s in 0 1 2; do
-  uv run python -m inboxrl.train_grpo --config configs/grpo_qwen05b_4gb.yaml --run-name main_s$s --seed $s $([ $s = 0 ] && echo --promote)
-  for split in synth_test real_test; do
-    uv run python -m inboxrl.evaluate --extractor agent --model runs/main_s$s/adapter --split $split --name grpo_main_s$s
-  done
+  uv run python -m inboxrl.train_grpo --config configs/grpo_v6.yaml --run-name v6_s$s --seed $s
+  uv run python -m inboxrl.evaluate --extractor agent --model runs/v6_s$s/adapter --split synth_test --name grpo_v6_s$s \
+      --batch-size 16 --max-new-tokens 320 --max-prompt-tokens 768
 done
 ```
-`--promote` copies the seed-0 adapter to `checkpoints/final/` (the committed, trained agent). A run that is
-interrupted can continue with `--resume` (same `--run-name`).
+The configs form a chain through `base:` (see the comment at the top of each file for what it changes and why):
+`grpo_qwen05b_4gb` (A) → `grpo_explore` → `grpo_v2` (compact prompt, date verifier) → `grpo_v4` (β = 0.3) → `grpo_v5`
+(β = 0.15) → `grpo_v6` (40 % no-event prompts). `v2`/`v3` were stopped when the `[]` answer collapsed
+(`runs/v2_s0`, `runs/v3_s0`, `runs/v5_s1` keep the partial logged rollouts as evidence).
+`--promote` on `train_grpo` copies an adapter to `checkpoints/final/` together with `inboxrl.json` (prompt version and
+token limits, which the demo and `evaluate` read back). The shipped adapter is `runs/v5_s0` (see `TRAINED_BY.txt`).
+A run that is interrupted can continue with `--resume` (same `--run-name`).
 
-**5. Ablations** (shorter runs; evaluated on the synthetic test set):
+**5. Figures and tables for the report** (reads `runs/*/completions` and `results/*.json` only):
 ```bash
-for a in no_curriculum beta0 format_only G2; do
-  uv run python -m inboxrl.train_grpo --config configs/ablation_$a.yaml --run-name ablation_$a --seed 0
-  uv run python -m inboxrl.evaluate --extractor agent --model runs/ablation_$a/adapter --split synth_test --name grpo_$a
-done
-```
-
-**6. Figures and tables for the report** (reads only `runs/main_s*/metrics.csv` and `results/*.json`):
-```bash
-uv run python -m inboxrl.plots
+uv run python -m inboxrl.plots          # writes report/figures/training_story.pdf, results_table.tex, numbers.tex
 cd report && pdflatex main && bibtex main && pdflatex main && pdflatex main
 ```
-This writes `report/figures/*.pdf`, `report/results_table.tex` and `report/ablation_table.tex`. **Never type a result
-into the report by hand.** Then fill in the red `\todo{}` sentences from the generated tables.
+**Never type a result into the report by hand**: the text uses the `\nm...` macros from `report/numbers.tex`.
 
-**What to copy back from the training machine:** `runs/*/metrics.csv`, `runs/*/config.yaml`, `results/`,
-`checkpoints/final/`. Checkpoint folders (`runs/*/checkpoint-*`) are gitignored.
+**What to copy back from the training machine:** `runs/*/metrics.csv`, `runs/*/config.yaml`, `runs/*/completions/`,
+`results/`, `checkpoints/final/`. Checkpoint folders (`runs/*/checkpoint-*`) are gitignored.
 
 ## Real emails (held-out test set)
 
@@ -121,13 +116,29 @@ Raw `.mbox`/`.eml` files, `raw_anonymized.jsonl` and the names list are gitignor
 uv run inboxrl extract --text "Quiz 2 of CSL3090 is on 5 Nov at 10 am in LHC-101." --received-date 2026-10-23
 uv run inboxrl extract --mbox ~/Takeout/Mail/Inbox.mbox --since 2026-10-01 --out events.ics
 ```
+A bare one-line `--text` with no subject, sender or greeting may return `[]`; the model was trained on full emails.
 Import `events.ics` into Google Calendar (Settings → Import). Times are written in Asia/Kolkata, and re-importing
 updates existing events instead of duplicating them. `--base-only` runs the untrained base model for comparison.
 
 ## Results
 
-All numbers are generated: see `report/results_table.tex`, `report/ablation_table.tex` and `report/figures/`
-after step 6.
+Synthetic test set (300 emails, template-disjoint, 40 without events). Numbers are copied from
+`report/results_table.tex` (generated from `results/*.json`); single runs, 95 % bootstrap CIs in the report.
+Real-email results do not exist: we did not label a real test set. (The 0.5B zero-shot 40/40 is not a skill: with the
+compact prompt it answers `[]` for 169 of the 260 emails that do have events.)
+
+| Method | F1 | Date acc. | No-event correct |
+|---|---|---|---|
+| Regex + dateparser | 60.5 | 62.7 | 27/40 |
+| Qwen-0.5B zero-shot (compact prompt) | 24.0 | 23.5 | 40/40 |
+| Qwen-1.5B zero-shot (compact prompt) | 67.1 | 82.4 | 6/40 |
+| GRPO A (original reward design, β = .04) | 61.4 | 64.7 | 0/40 |
+| GRPO C (β = .15), seed 0 — shipped adapter | 72.2 | 79.4 | 40/40 |
+| GRPO D (+ 40 % no-event prompts), seeds 0 / 1 / 2 | 69.9 / 68.4 / 70.9 | 77.5 / 78.1 / 79.4 | 40/40 on all three |
+
+Known weaknesses: relative dates ("tomorrow", "this Thursday") are right for only about a third of L3 events in every
+run, where the regex baseline does better; configuration C collapsed on seed 1 (the model stopped answering `[]`), so
+single-seed numbers are optimistic. See `report/main.tex`.
 
 ## Repository layout
 

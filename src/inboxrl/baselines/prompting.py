@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from inboxrl.prompts import SYSTEM_PROMPT, format_email_user_content
+from inboxrl.prompts import SYSTEM_PROMPTS, format_email_user_content
 
 FEW_SHOT_EXAMPLES = [
     {
@@ -50,17 +50,21 @@ FEW_SHOT_EXAMPLES = [
 ]
 
 
-def build_zero_shot_messages(received_date: str, sender: str, subject: str, body: str) -> list[dict[str, str]]:
+def build_zero_shot_messages(
+    received_date: str, sender: str, subject: str, body: str, version: int = 1
+) -> list[dict[str, str]]:
     """Build messages for zero-shot prompt."""
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": SYSTEM_PROMPTS[version]},
         {"role": "user", "content": format_email_user_content(received_date, sender, subject, body)},
     ]
 
 
-def build_few_shot_messages(received_date: str, sender: str, subject: str, body: str) -> list[dict[str, str]]:
+def build_few_shot_messages(
+    received_date: str, sender: str, subject: str, body: str, version: int = 1
+) -> list[dict[str, str]]:
     """Build messages for 3-shot in-context learning prompt."""
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": SYSTEM_PROMPTS[version]}]
     for ex in FEW_SHOT_EXAMPLES:
         messages.append({
             "role": "user",

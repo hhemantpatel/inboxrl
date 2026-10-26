@@ -1,0 +1,45 @@
+{
+  "name": "grpo_no_curriculum",
+  "split": "synth_test",
+  "total_samples": 300,
+  "valid_json_ratio": 0.9466666666666667,
+  "mean_reward": 1.4240804477968967,
+  "total_pred_events": 305,
+  "total_gold_events": 306,
+  "true_positive_events": 180,
+  "event_precision": 0.5901639344262295,
+  "event_recall": 0.5882352941176471,
+  "event_f1": 0.5891980360065467,
+  "event_f1_ci": [
+    0.5348504167776804,
+    0.6439178348594116
+  ],
+  "date_accuracy": 0.6699346405228758,
+  "date_accuracy_ci": [
+    0.6084175023447081,
+    0.7317136032185064
+  ],
+  "paired_date_acc": 0.7564575645756457,
+  "paired_time_acc": 0.6531365313653137,
+  "paired_type_acc": 0.940959409594096,
+  "paired_title_f1": 0.7920283488549171,
+  "exact_match_ratio": 0.35333333333333333,
+  "no_event_samples": 40,
+  "no_event_accuracy": 0.0,
+  "no_event_invalid_rate": 0.175,
+  "hallucination_rate_on_empty": 0.825,
+  "level_f1": {
+    "1": 0.8318584070796461,
+    "2": 0.8703703703703702,
+    "3": 0.32142857142857145,
+    "4": 0.4848484848484849,
+    "5": 0.49557522123893805
+  },
+  "level_rewards": {
+    "1": 1.8890818903318902,
+    "2": 1.7362301587301585,
+    "3": 1.1351124338624339,
+    "4": 0.9548493349500294,
+    "5": 1.4051284211099713
+  }
+}

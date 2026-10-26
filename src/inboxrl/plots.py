@@ -1,23 +1,22 @@
-"""Figures and LaTeX tables for the report, generated ONLY from real outputs.
+"""Figures, LaTeX tables and number macros for the report, generated ONLY from real outputs.
 
 Inputs:
-    runs/<run>/metrics.csv          (written by train_grpo.py)
-    results/<name>_<split>.json     (written by evaluate.py)
+    runs/<run>/completions/*.parquet  (logged rollouts; present for every run, including the ones we stopped)
+    results/<name>_<split>.json       (written by evaluate.py)
 Outputs:
-    report/figures/*.pdf|png, report/results_table.tex, report/ablation_table.tex
+    report/figures/training_story.{pdf,png}   reward, share of `[]` answers and per-level F1
+    report/results_table.tex                  one row per baseline / GRPO run
+    report/numbers.tex                        \\newcommand macros for every number quoted in the text
 
 Anything missing is skipped with a message; no number is ever filled in by hand.
-
-Result-name convention (see README):
-    baselines: empty, random, rule, zeroshot_0.5b, fewshot_0.5b, zeroshot_1.5b
-    GRPO main: grpo_main_s0, grpo_main_s1, grpo_main_s2 (seeds)
-    ablations: grpo_no_curriculum, grpo_beta0, grpo_format_only, grpo_G2
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import re
 from glob import glob
 from pathlib import Path
 from typing import Any, Optional
@@ -31,14 +30,14 @@ import pandas as pd  # noqa: E402
 
 # Validated categorical palette (fixed order) + neutral ink for text, grid, baselines
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
-INK, INK_2, GRID, NEUTRAL = "#0b0b0b", "#52514e", "#e4e3df", "#9b9a95"
+INK, INK_2, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
 plt.rcParams.update({
-    "font.size": 9,
+    "font.size": 8,
     "font.family": "serif",
     "axes.edgecolor": INK_2,
     "axes.labelcolor": INK,
-    "axes.titlesize": 9.5,
+    "axes.titlesize": 8.5,
     "axes.spines.top": False,
     "axes.spines.right": False,
     "axes.grid": True,
@@ -47,26 +46,50 @@ plt.rcParams.update({
     "xtick.color": INK_2,
     "ytick.color": INK_2,
     "legend.frameon": False,
-    "legend.fontsize": 8,
-    "lines.linewidth": 1.6,
+    "legend.fontsize": 7,
+    "lines.linewidth": 1.4,
     "savefig.bbox": "tight",
 })
 
-BASELINE_LABELS = {
-    "empty": "Constant []",
-    "random": "Random guess",
-    "rule": "Regex + dateparser",
-    "zeroshot_0.5b": "Qwen-0.5B zero-shot",
-    "fewshot_0.5b": "Qwen-0.5B 3-shot",
-    "zeroshot_1.5b": "Qwen-1.5B zero-shot",
-}
-ABLATION_LABELS = {
-    "grpo_no_curriculum": "w/o curriculum",
-    "grpo_beta0": r"w/o KL ($\beta=0$)",
-    "grpo_format_only": "format reward only",
-    "grpo_G2": "group size $G=2$",
-}
-MAIN_PREFIX = "grpo_main_s"
+# (result name, label, system-prompt version); baselines first, then our GRPO runs.
+BASELINE_ROWS = [
+    ("rule", "Regex + dateparser", "--"),
+    ("zeroshot_0.5b", "Qwen-0.5B zero-shot", "1"),
+    ("zeroshot_0.5b_v2", "Qwen-0.5B zero-shot", "2"),
+    ("fewshot_0.5b", "Qwen-0.5B 3-shot", "1"),
+    ("zeroshot_1.5b", "Qwen-1.5B zero-shot", "1"),
+    ("zeroshot_1.5b_v2", "Qwen-1.5B zero-shot", "2"),
+]
+GRPO_ROWS = [
+    ("grpo_main_s0", "A: baseline reward design, $\\beta{=}.04$", "1"),
+    ("grpo_explore_s0", "A + $T{=}1$, $G{=}8$", "1"),
+    ("grpo_no_curriculum", "A without curriculum", "1"),
+    ("grpo_v4_s0", "B: new prompt, $\\beta{=}.3$", "2"),
+    ("grpo_v5_s0", "C: B with $\\beta{=}.15$ (seed 0)", "2"),
+    ("grpo_v6_s0", "D: C + 40\\% no-event (seed 0)", "2"),
+    ("grpo_v6_s1", "D: C + 40\\% no-event (seed 1)", "2"),
+    ("grpo_v6_s2", "D: C + 40\\% no-event (seed 2)", "2"),
+]
+# groups of seeds of one configuration, summarised as mean / std in numbers.tex
+SEED_GROUPS = {"v6": "grpo_v6_s*"}
+
+# runs shown in the training-story figure: (run dir, legend label, colour, linestyle)
+STORY_RUNS = [
+    ("v2_s0", "v2 ($\\beta{=}.04$)", SERIES[3], "--"),
+    ("v3_s0", "v3 (50% no-event, $w_{empty}{=}2$)", INK_2, ":"),
+    ("v5_s1", "v5, seed 1", SERIES[1], "--"),
+    ("v5_s0", "v5, seed 0", SERIES[0], "-"),
+    ("v6_s0", "v6, seed 0", SERIES[2], "-"),
+    ("v6_s1", "v6, seed 1", SERIES[2], "-."),
+    ("v6_s2", "v6, seed 2", SERIES[2], ":"),
+]
+LEVEL_NAMES = {1: "L1", 2: "L2", 3: "L3", 4: "L4", 5: "L5"}
+LEVEL_SERIES = [
+    ("zeroshot_1.5b_v2", "1.5B zero-shot", INK_2),
+    ("grpo_v5_s0", "v5 seed 0", SERIES[0]),
+    ("grpo_v6_s0", "v6 seed 0", SERIES[2]),
+    ("grpo_v6_s1", "v6 seed 1", SERIES[3]),
+]
 
 
 def _save(fig: Any, out_dir: Path, name: str) -> None:
@@ -77,84 +100,17 @@ def _save(fig: Any, out_dir: Path, name: str) -> None:
     print(f"  wrote {out_dir / name}.pdf")
 
 
-def load_runs(pattern: str) -> dict[str, pd.DataFrame]:
-    runs = {}
-    for path in sorted(glob(str(Path(pattern) / "metrics.csv"))):
-        df = pd.read_csv(path)
-        runs[Path(path).parent.name] = df
-    return runs
-
-
-def _train_rows(df: pd.DataFrame, col: str) -> pd.DataFrame:
-    return df[["step", col]].dropna() if col in df else pd.DataFrame(columns=["step", col])
-
-
-def _mean_std(runs: dict[str, pd.DataFrame], col: str, smooth: int) -> Optional[pd.DataFrame]:
-    """Align runs on step, smooth each with a rolling mean, return mean/std across runs."""
-    series = []
-    for df in runs.values():
-        rows = _train_rows(df, col)
-        if rows.empty:
-            continue
-        s = rows.groupby("step")[col].mean().rolling(smooth, min_periods=1).mean()
-        series.append(s)
-    if not series:
+def load_completions(run_dir: Path) -> Optional[pd.DataFrame]:
+    files = sorted(glob(str(run_dir / "completions" / "*.parquet")))
+    if not files:
         return None
-    joined = pd.concat(series, axis=1).dropna()
-    return pd.DataFrame({"mean": joined.mean(axis=1), "std": joined.std(axis=1).fillna(0.0)})
+    df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+    df["is_empty"] = df["completion"].astype(str).str.strip().eq("[]")
+    return df
 
 
-def plot_training(runs: dict[str, pd.DataFrame], out_dir: Path, smooth: int = 5) -> None:
-    if not runs:
-        print("  no training runs found; skipping training curves")
-        return
-    n = len(runs)
-    seeds_note = f"mean $\\pm$ std over {n} seeds" if n > 1 else "single run"
-
-    # 1. Total reward (train, smoothed) + validation reward
-    stats = _mean_std(runs, "reward", smooth)
-    fig, ax = plt.subplots(figsize=(3.4, 2.3))
-    if stats is not None:
-        ax.plot(stats.index, stats["mean"], color=SERIES[0], label="train (rollouts)")
-        ax.fill_between(stats.index, stats["mean"] - stats["std"], stats["mean"] + stats["std"],
-                        color=SERIES[0], alpha=0.18, linewidth=0)
-    ev = _mean_std(runs, "eval_reward", 1)
-    if ev is not None:
-        ax.errorbar(ev.index, ev["mean"], yerr=ev["std"] if n > 1 else None, color=SERIES[1],
-                    marker="o", markersize=4, linewidth=1.2, capsize=2, label="validation")
-    ax.set_xlabel("optimizer step")
-    ax.set_ylabel("reward $R$")
-    ax.set_title(f"GRPO reward ({seeds_note})")
-    ax.legend(loc="lower right")
-    _save(fig, out_dir, "reward_vs_step")
-
-    # 2. Reward components (same scale family: each in [-1, 1])
-    fig, ax = plt.subplots(figsize=(3.4, 2.3))
-    for i, (col, label) in enumerate([("rewards/reward_func_format/mean", "$r_{fmt}$"),
-                                      ("rewards/reward_func_match/mean", "$r_{match}$"),
-                                      ("rewards/reward_func_empty/mean", "$r_{empty}$"),
-                                      ("rewards/reward_func_len/mean", "$r_{len}$")]):
-        s = _mean_std(runs, col, smooth)
-        if s is not None:
-            ax.plot(s.index, s["mean"], color=SERIES[i], label=label)
-    ax.set_xlabel("optimizer step")
-    ax.set_ylabel("component value")
-    ax.set_title("Reward decomposition")
-    ax.legend(loc="lower right", ncol=2)
-    _save(fig, out_dir, "reward_components")
-
-    # 3. Diagnostics as small multiples (separate y-axes, never a dual axis)
-    diag = [("kl", "KL to reference"), ("completions/mean_length", "completion tokens"),
-            ("frac_reward_zero_std", "groups with zero reward std")]
-    fig, axes = plt.subplots(1, 3, figsize=(7.0, 1.9))
-    for ax, (col, title) in zip(axes, diag):
-        s = _mean_std(runs, col, smooth)
-        if s is not None:
-            ax.plot(s.index, s["mean"], color=SERIES[0])
-            ax.fill_between(s.index, s["mean"] - s["std"], s["mean"] + s["std"], color=SERIES[0], alpha=0.18, linewidth=0)
-        ax.set_title(title)
-        ax.set_xlabel("step")
-    _save(fig, out_dir, "training_diagnostics")
+def _binned(df: pd.DataFrame, col: str, width: int) -> pd.Series:
+    return df.groupby((df["step"] // width) * width + width // 2)[col].mean()
 
 
 def load_results(results_dir: Path, split: str) -> dict[str, dict[str, Any]]:
@@ -165,162 +121,171 @@ def load_results(results_dir: Path, split: str) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _grpo_main(results: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    return [v for k, v in sorted(results.items()) if k.startswith(MAIN_PREFIX)]
-
-
-def plot_comparison(results: dict[str, dict[str, Any]], split: str, out_dir: Path) -> None:
-    names = [n for n in BASELINE_LABELS if n in results and n not in ("empty", "random")]
-    mains = _grpo_main(results)
-    if not names and not mains:
-        print(f"  no results for {split}; skipping comparison plot")
+def plot_training_story(runs_dir: Path, results: dict[str, dict[str, Any]], out_dir: Path, width: int = 20) -> None:
+    """(a) mean reward, (b) share of `[]` answers, (c) per-level F1; (a, b) come from the logged rollouts."""
+    data = {run: load_completions(runs_dir / run) for run, *_ in STORY_RUNS}
+    data = {k: v for k, v in data.items() if v is not None}
+    if not data:
+        print("  no logged rollouts found; skipping training-story figure")
         return
-    labels = [BASELINE_LABELS[n] for n in names]
-    rows = [results[n] for n in names]
-    if mains:
-        labels.append("InboxRL (GRPO)")
-        rows.append(mains[0] if len(mains) == 1 else None)  # placeholder, filled below
+    fig, axes = plt.subplots(1, 3, figsize=(7.2, 1.8), gridspec_kw={"width_ratios": [1, 1, 0.9]})
+    ax_r, ax_e, ax_l = axes
+    for run, label, colour, ls in STORY_RUNS:
+        df = data.get(run)
+        if df is None:
+            continue
+        r, e = _binned(df, "reward_func_total", width), _binned(df, "is_empty", width)
+        if run in ("v5_s0", "v6_s0", "v6_s1", "v6_s2"):
+            ax_r.plot(r.index, r.values, color=colour, ls=ls, label=label)
+        ax_e.plot(e.index, e.values, color=colour, ls=ls, label=label)
+    ax_r.set_xlabel("optimizer step")
+    ax_r.set_ylabel("mean reward $R$")
+    ax_r.set_title("(a) reward of GRPO rollouts")
+    ax_r.legend(loc="lower right")
+    ax_e.set_xlabel("optimizer step")
+    ax_e.set_ylabel("fraction of rollouts")
+    ax_e.set_title("(b) share of $[\\,]$ answers")
+    ax_e.set_ylim(-0.02, 2.0)
+    ax_e.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax_e.legend(loc="upper right", fontsize=6, ncol=2, columnspacing=0.8, handlelength=1.6)
 
-    metrics = [("event_f1", "Event F1"), ("date_accuracy", "Date accuracy"), ("valid_json_ratio", "Valid JSON")]
-    x = np.arange(len(labels))
-    width = 0.26
-    fig, ax = plt.subplots(figsize=(7.0, 2.4))
-    for i, (key, mlabel) in enumerate(metrics):
-        vals, errs = [], [[], []]
-        for j, row in enumerate(rows):
-            if row is None:  # GRPO over several seeds: mean and std
-                arr = np.array([m[key] for m in mains])
-                v, lo, hi = arr.mean(), arr.std(), arr.std()
-            else:
-                v = row[key]
-                ci = row.get(f"{key}_ci") or []
-                lo, hi = (v - ci[0], ci[1] - v) if len(ci) == 2 else (0.0, 0.0)
-            vals.append(100 * v)
-            errs[0].append(100 * lo)
-            errs[1].append(100 * hi)
-        ax.bar(x + (i - 1) * width, vals, width - 0.03, color=SERIES[i], label=mlabel,
-               yerr=errs, error_kw={"elinewidth": 0.8, "capsize": 2, "ecolor": INK_2})
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=12, ha="right")
-    ax.set_ylabel("%")
-    ax.set_ylim(0, 122)  # headroom so the legend never covers a bar
-    ax.set_yticks(range(0, 101, 20))
-    ax.grid(axis="x", visible=False)
-    ax.set_title(f"Comparison on {split.replace('_', ' ')} (error bars: 95% bootstrap CI; GRPO: std over seeds)")
-    ax.legend(loc="upper left", ncol=3)
-    _save(fig, out_dir, f"comparison_{split}")
-
-
-def plot_levels(results: dict[str, dict[str, Any]], split: str, out_dir: Path) -> None:
-    base = results.get("zeroshot_0.5b")
-    mains = _grpo_main(results)
-    if base is None or not mains:
-        print(f"  need zeroshot_0.5b and grpo_main_s* results on {split}; skipping per-level plot")
-        return
-    levels = sorted(int(k) for k in base["level_f1"])
-    x = np.arange(len(levels))
-    grpo = np.array([[m["level_f1"].get(str(l), 0.0) for l in levels] for m in mains])
-    fig, ax = plt.subplots(figsize=(3.4, 2.3))
-    ax.bar(x - 0.2, [100 * base["level_f1"][str(l)] for l in levels], 0.37, color=NEUTRAL, label="zero-shot base")
-    ax.bar(x + 0.2, 100 * grpo.mean(0), 0.37, color=SERIES[0], label="InboxRL (GRPO)",
-           yerr=100 * grpo.std(0) if len(mains) > 1 else None, error_kw={"elinewidth": 0.8, "capsize": 2})
-    names = {1: "L1 explicit", 2: "L2 formats", 3: "L3 relative", 4: "L4 distract.", 5: "L5 noisy"}
-    ax.set_xticks(x)
-    ax.set_xticklabels([names.get(l, f"L{l}") for l in levels], rotation=20, ha="right")
-    ax.set_ylabel("event F1 (%)")
-    ax.set_ylim(0, 125)
-    ax.set_yticks(range(0, 101, 20))
-    ax.grid(axis="x", visible=False)
-    ax.set_title("F1 by difficulty level")
-    ax.legend(loc="upper left", ncol=2)
-    _save(fig, out_dir, f"levels_{split}")
+    series = [(n, lab, c) for n, lab, c in LEVEL_SERIES if n in results]
+    if series:
+        x = np.arange(1, 6)
+        w = 0.8 / len(series)
+        for i, (n, lab, c) in enumerate(series):
+            ax_l.bar(x - 0.4 + w * (i + 0.5), [100 * results[n]["level_f1"].get(str(l), 0.0) for l in x], w,
+                     color=c, label=lab)
+        ax_l.set_xticks(x)
+        ax_l.set_xticklabels([LEVEL_NAMES[int(l)] for l in x])
+        ax_l.set_ylabel("event F1 (%)")
+        ax_l.set_ylim(0, 135)
+        ax_l.set_yticks(range(0, 101, 20))
+        ax_l.grid(axis="x", visible=False)
+        ax_l.set_title("(c) F1 by difficulty level")
+        ax_l.legend(loc="upper right", ncol=2, fontsize=6, columnspacing=0.8, handlelength=1.0)
+    fig.tight_layout(w_pad=1.0)
+    _save(fig, out_dir, "training_story")
 
 
-def _fmt(m: dict[str, Any], key: str) -> str:
-    return f"{100 * m[key]:.1f}"
+def _pct(x: float) -> str:
+    return f"{100 * x:.1f}"
 
 
-def _fmt_seeds(mains: list[dict[str, Any]], key: str) -> str:
-    arr = np.array([m[key] for m in mains]) * 100
-    return f"{arr.mean():.1f}" if len(arr) == 1 else f"{arr.mean():.1f}$\\pm${arr.std():.1f}"
+def _row(label: str, prompt: str, m: dict[str, Any]) -> str:
+    ci = m.get("event_f1_ci") or [m["event_f1"]] * 2
+    l3 = m.get("level_f1", {}).get("3")
+    return (f"{label} & {prompt} & {_pct(m['event_f1'])} \\scriptsize[{_pct(ci[0])}, {_pct(ci[1])}] & "
+            f"{_pct(m['date_accuracy'])} & {_pct(m['valid_json_ratio'])} & "
+            f"{_pct(m['no_event_accuracy']) if 'no_event_accuracy' in m else '--'} & "
+            f"{_pct(l3) if l3 is not None else '--'} \\\\")
 
 
-def write_results_table(results_by_split: dict[str, dict[str, dict[str, Any]]], out: Path) -> None:
-    """One row per method; F1 / date accuracy / valid JSON / mean reward for each split present."""
-    splits = [s for s, r in results_by_split.items() if r]
-    if not splits:
+def write_results_table(results: dict[str, dict[str, Any]], out: Path) -> None:
+    if not results:
         print("  no results; skipping results table")
         return
-    cols = " & ".join(f"\\multicolumn{{3}}{{c}}{{{s.replace('_', ' ')}}}" for s in splits)
-    sub = " & ".join(["F1 & Date & JSON"] * len(splits))
     lines = [
         "% AUTO-GENERATED by `python -m inboxrl.plots` from results/*.json -- do not edit by hand.",
-        f"\\begin{{tabular}}{{l{'ccc' * len(splits)}}}",
+        "\\begin{tabular}{llccccc}",
         "\\toprule",
-        f" & {cols} \\\\",
-        f"Method & {sub} \\\\",
+        "Method & Prompt & F1 \\scriptsize[95\\% CI] & Date & JSON & No-event & L3 F1 \\\\",
         "\\midrule",
     ]
-    for name, label in BASELINE_LABELS.items():
-        cells = []
-        for s in splits:
-            m = results_by_split[s].get(name)
-            cells += [_fmt(m, "event_f1"), _fmt(m, "date_accuracy"), _fmt(m, "valid_json_ratio")] if m else ["--"] * 3
-        if any(c != "--" for c in cells):
-            lines.append(f"{label} & {' & '.join(cells)} \\\\")
-    cells = []
-    for s in splits:
-        mains = _grpo_main(results_by_split[s])
-        cells += ([_fmt_seeds(mains, k) for k in ("event_f1", "date_accuracy", "valid_json_ratio")]
-                  if mains else ["--"] * 3)
-    lines += ["\\midrule", f"InboxRL (GRPO) & {' & '.join(cells)} \\\\", "\\bottomrule", "\\end{tabular}"]
-    out.write_text("\n".join(lines) + "\n")
-    print(f"  wrote {out}")
-
-
-def write_ablation_table(results: dict[str, dict[str, Any]], split: str, out: Path) -> None:
-    mains = _grpo_main(results)
-    rows = [(label, results[name]) for name, label in ABLATION_LABELS.items() if name in results]
-    if not mains or not rows:
-        print(f"  need grpo_main_s* and ablation results on {split}; skipping ablation table")
-        return
-    lines = [
-        "% AUTO-GENERATED by `python -m inboxrl.plots` from results/*.json -- do not edit by hand.",
-        "\\begin{tabular}{lcccc}",
-        "\\toprule",
-        "Configuration & F1 & Date & JSON & $\\bar R$ \\\\",
-        "\\midrule",
-        "Full InboxRL & " + " & ".join(_fmt_seeds(mains, k) for k in ("event_f1", "date_accuracy", "valid_json_ratio"))
-        + f" & {np.mean([m['mean_reward'] for m in mains]):.2f} \\\\",
-    ]
-    for label, m in rows:
-        lines.append(f"{label} & {_fmt(m, 'event_f1')} & {_fmt(m, 'date_accuracy')} & "
-                     f"{_fmt(m, 'valid_json_ratio')} & {m['mean_reward']:.2f} \\\\")
+    for block in (BASELINE_ROWS, GRPO_ROWS):
+        rows = [_row(label, prompt, results[name]) for name, label, prompt in block if name in results]
+        lines += rows
+        if block is BASELINE_ROWS and rows:
+            lines.append("\\midrule")
     lines += ["\\bottomrule", "\\end{tabular}"]
     out.write_text("\n".join(lines) + "\n")
     print(f"  wrote {out}")
 
 
+_DIGITS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+
+
+def _macro(*parts: str) -> str:
+    """LaTeX control sequences may only contain letters: spell digits out, drop everything else."""
+    text = "_".join(parts)
+    text = re.sub(r"\d", lambda m: "_" + _DIGITS[int(m.group())] + "_", text)
+    return "".join(p.capitalize() for p in re.split(r"[^A-Za-z]+", text) if p)
+
+
+def l3_date_errors(comp_dir: Path, name: str, split: str) -> Optional[dict[str, float]]:
+    """Signed day error of the predicted date on L3 (relative-date) emails whose output parsed as a JSON list."""
+    path = comp_dir / f"{name}_{split}.jsonl"
+    if not path.exists():
+        return None
+    errs: list[int] = []
+    for line in path.read_text().splitlines():
+        row = json.loads(line)
+        if row["level"] != 3:
+            continue
+        try:
+            pred = json.loads(row["completion"])
+            errs += [(dt.date.fromisoformat(p["date"]) - dt.date.fromisoformat(g["date"])).days
+                     for g, p in zip(row["gold"], pred)]
+        except (ValueError, KeyError, TypeError):
+            continue
+    if not errs:
+        return None
+    a = np.abs(np.array(errs))
+    return {"N": float(len(a)), "Exact": 100 * float((a == 0).mean()), "OffOne": 100 * float((a == 1).mean()),
+            "OffFar": 100 * float((a >= 4).mean())}
+
+
+def write_numbers(results: dict[str, dict[str, Any]], out: Path, comp_dir: Optional[Path] = None, split: str = "synth_test") -> None:
+    """One macro per quoted number, e.g. \\nmGrpoVfiveSzeroF = 72.2. The report text only uses these."""
+    lines = ["% AUTO-GENERATED by `python -m inboxrl.plots` from results/*.json -- do not edit by hand."]
+
+    def emit(name: str, value: float) -> None:
+        lines.append(f"\\newcommand{{\\nm{name}}}{{{value:.1f}}}")
+
+    fields = {"F": "event_f1", "Date": "date_accuracy", "Json": "valid_json_ratio", "NoEv": "no_event_accuracy",
+              "Prec": "event_precision", "Rec": "event_recall", "TitleF": "paired_title_f1",
+              "TimeAcc": "paired_time_acc"}
+    for name, m in results.items():
+        base = _macro(name)
+        for short, key in fields.items():
+            if key in m:
+                emit(base + short, 100 * m[key])
+        ci = m.get("event_f1_ci")
+        if ci:
+            emit(base + "FLo", 100 * ci[0])
+            emit(base + "FHi", 100 * ci[1])
+        for lvl, v in m.get("level_f1", {}).items():
+            emit(base + "Lvl" + _DIGITS[int(lvl)].capitalize(), 100 * v)
+    for name in results:
+        stats = l3_date_errors(comp_dir, name, split) if comp_dir is not None and name.startswith("grpo_") else None
+        for short, v in (stats or {}).items():
+            emit(_macro(name) + "LthreeDate" + short, v)
+    for group, pattern in SEED_GROUPS.items():
+        members = [m for n, m in sorted(results.items()) if re.fullmatch(pattern.replace("*", ".*"), n)]
+        if len(members) >= 2:
+            lines.append(f"\\newcommand{{\\nm{_macro(group)}Seeds}}{{{len(members)}}}")
+            for short, key in {"F": "event_f1", "Date": "date_accuracy", "Json": "valid_json_ratio"}.items():
+                arr = np.array([m[key] for m in members]) * 100
+                emit(_macro(group) + "Mean" + short, float(arr.mean()))
+                emit(_macro(group) + "Std" + short, float(arr.std()))
+    out.write_text("\n".join(lines) + "\n")
+    print(f"  wrote {out} ({len(lines) - 1} macros)")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate report figures and tables from real runs/results.")
-    parser.add_argument("--main-runs", default="runs/main_s*", help="Glob of main-config run dirs (one per seed)")
+    parser = argparse.ArgumentParser(description="Generate report figures, tables and macros from real runs/results.")
+    parser.add_argument("--runs-dir", default="runs")
     parser.add_argument("--results-dir", default="results")
-    parser.add_argument("--splits", nargs="+", default=["synth_test", "real_test"])
-    parser.add_argument("--ablation-split", default="synth_test")
+    parser.add_argument("--split", default="synth_test")
     parser.add_argument("--out-dir", default="report/figures")
     parser.add_argument("--tables-dir", default="report")
     args = parser.parse_args()
 
-    out_dir, tables_dir, results_dir = Path(args.out_dir), Path(args.tables_dir), Path(args.results_dir)
-    plot_training(load_runs(args.main_runs), out_dir)
-
-    results_by_split = {s: load_results(results_dir, s) for s in args.splits}
-    for split, results in results_by_split.items():
-        plot_comparison(results, split, out_dir)
-        plot_levels(results, split, out_dir)
-    write_results_table(results_by_split, tables_dir / "results_table.tex")
-    write_ablation_table(results_by_split.get(args.ablation_split, {}), args.ablation_split,
-                         tables_dir / "ablation_table.tex")
+    results = load_results(Path(args.results_dir), args.split)
+    tables_dir = Path(args.tables_dir)
+    plot_training_story(Path(args.runs_dir), results, Path(args.out_dir))
+    write_results_table(results, tables_dir / "results_table.tex")
+    write_numbers(results, tables_dir / "numbers.tex", Path(args.results_dir) / "completions", args.split)
 
 
 if __name__ == "__main__":

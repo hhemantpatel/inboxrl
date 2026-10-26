@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date as _date
 from typing import Any, Optional, Sequence, Union
 
 import numpy as np
@@ -30,6 +31,11 @@ class RewardWeights:
     # caps the pair similarity at 0.25 * 0.65 ~= 0.16.
     wrong_date_factor: float = 0.25
     max_chars: int = 800
+    # Date verifier: a wrong date earns up to `date_closeness` of the date credit, linearly decaying to 0 at
+    # `date_horizon_days` off. An exact date still earns 1.0, and the other fields stay gated on the exact date,
+    # so a near miss never beats a hit. 0 (default) keeps the original all-or-nothing date reward.
+    date_closeness: float = 0.0
+    date_horizon_days: int = 14
 
 
 @dataclass
@@ -75,6 +81,20 @@ def title_token_f1(pred: str, gold: str) -> float:
     return 2 * precision * recall / (precision + recall)
 
 
+def date_credit(pred_date: str, gold_date: str, weights: RewardWeights) -> float:
+    """Credit in [0, 1] for a predicted date: 1 if exact, else a distance-decayed fraction of `date_closeness`.
+
+    A calendar-arithmetic verifier: off-by-one-day and off-by-one-week mistakes ("this Friday" vs "next Friday")
+    are told apart from random dates, which makes the signal dense in groups where no completion is exactly right.
+    """
+    if pred_date == gold_date:
+        return 1.0
+    if weights.date_closeness <= 0.0:
+        return 0.0
+    delta = abs((_date.fromisoformat(pred_date) - _date.fromisoformat(gold_date)).days)
+    return weights.date_closeness * max(0.0, 1.0 - delta / weights.date_horizon_days)
+
+
 def _event_similarity(pred: Event, gold: Event, weights: RewardWeights) -> float:
     """Compute similarity S(pred, gold) in [0.0, 1.0]."""
     date_ok = pred.date == gold.date
@@ -100,7 +120,7 @@ def _event_similarity(pred: Event, gold: Event, weights: RewardWeights) -> float
         + weights.w_loc * loc_sim
     )
     gate = 1.0 if date_ok else weights.wrong_date_factor
-    return weights.w_date * float(date_ok) + gate * rest
+    return weights.w_date * date_credit(pred.date, gold.date, weights) + gate * rest
 
 
 def compute_hungarian_match_score(
@@ -235,9 +255,11 @@ def compute_reward_single(
 # the component functions are logged for analysis.
 # ==============================================================================
 
-def _breakdowns(completions: Sequence[Any], kwargs: dict[str, Any]) -> list[RewardBreakdown]:
+def _breakdowns(
+    completions: Sequence[Any], kwargs: dict[str, Any], weights: Optional[RewardWeights] = None
+) -> list[RewardBreakdown]:
     gold_list = kwargs["gold"]
-    return [compute_reward_single(c, g) for c, g in zip(completions, gold_list)]
+    return [compute_reward_single(c, g, weights=weights) for c, g in zip(completions, gold_list)]
 
 
 def reward_func_total(prompts: Sequence[Any], completions: Sequence[Any], **kwargs: Any) -> list[float]:
@@ -263,3 +285,24 @@ def reward_func_empty(prompts: Sequence[Any], completions: Sequence[Any], **kwar
 def reward_func_len(prompts: Sequence[Any], completions: Sequence[Any], **kwargs: Any) -> list[float]:
     """Cleanliness / length penalty component."""
     return [b.r_len for b in _breakdowns(completions, kwargs)]
+
+
+def make_reward_funcs(weights: RewardWeights) -> list:
+    """The five TRL reward functions (total, format, match, empty, len) bound to custom RewardWeights."""
+
+    def reward_func_total(prompts, completions, **kwargs):
+        return [b.total for b in _breakdowns(completions, kwargs, weights)]
+
+    def reward_func_format(prompts, completions, **kwargs):
+        return [1.0 if parse_completion(completion_text(c)) is not None else -1.0 for c in completions]
+
+    def reward_func_match(prompts, completions, **kwargs):
+        return [b.r_match for b in _breakdowns(completions, kwargs, weights)]
+
+    def reward_func_empty(prompts, completions, **kwargs):
+        return [b.r_empty for b in _breakdowns(completions, kwargs, weights)]
+
+    def reward_func_len(prompts, completions, **kwargs):
+        return [b.r_len for b in _breakdowns(completions, kwargs, weights)]
+
+    return [reward_func_total, reward_func_format, reward_func_match, reward_func_empty, reward_func_len]

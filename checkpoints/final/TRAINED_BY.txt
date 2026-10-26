@@ -1,2 +1,2 @@
-run: main_s0
-config: see runs/main_s0/config.yaml
+run: v5_s0
+config: see runs/v5_s0/config.yaml

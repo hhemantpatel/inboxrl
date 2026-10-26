@@ -228,28 +228,64 @@ def rule_extractor(records: list[dict[str, Any]]) -> list[str]:
     ]
 
 
-def model_extractor(mode: str, model_id: str, batch_size: int, max_new_tokens: int, max_prompt_tokens: int) -> Extractor:
-    """zero-shot / few-shot prompting of a base model, or the trained agent (adapter dir)."""
+def adapter_settings(adapter_dir: str) -> dict[str, int]:
+    """Prompt version and token limits an adapter was trained with.
+
+    Read from `inboxrl.json` inside the adapter (written when a run is promoted to checkpoints/final), else from the
+    config.yaml its run wrote next to the adapter; older adapters get the v1 defaults.
+    """
+    import yaml
+
+    adapter = Path(adapter_dir).resolve()
+    cfg: dict[str, Any] = {}
+    if (adapter / "inboxrl.json").exists():
+        cfg = json.loads((adapter / "inboxrl.json").read_text())
+    elif (adapter.parent / "config.yaml").exists():
+        with open(adapter.parent / "config.yaml", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    return {
+        "prompt_version": int(cfg.get("prompt_version", 1)),
+        "max_prompt_tokens": int(cfg.get("max_prompt_tokens", 640)),
+        "max_new_tokens": int(cfg.get("max_completion_length", 192)),
+    }
+
+
+def adapter_prompt_version(adapter_dir: str) -> int:
+    """Prompt version an adapter was trained with (see `adapter_settings`)."""
+    return adapter_settings(adapter_dir)["prompt_version"]
+
+
+def model_extractor(
+    mode: str, model_id: str, batch_size: int, max_new_tokens: int, max_prompt_tokens: int,
+    prompt_version: Optional[int] = None,
+) -> Extractor:
+    """zero-shot / few-shot prompting of a base model, or the trained agent (adapter dir).
+
+    The agent must be prompted exactly as it was trained: `prompt_version` defaults to the one in its run config.
+    """
     from inboxrl.agent import generate_batch, load_model
     from inboxrl.baselines.prompting import build_few_shot_messages
     from inboxrl.prompts import build_prompt
 
     if mode == "agent":
         model, tok = load_model(adapter_path=model_id)
+        if prompt_version is None:
+            prompt_version = adapter_prompt_version(model_id)
     else:
         model, tok = load_model(base_model_name=model_id)
+    version = prompt_version or 1
 
     def run(records: list[dict[str, Any]]) -> list[str]:
         if mode == "few-shot":
             prompts = [
                 tok.apply_chat_template(
-                    build_few_shot_messages(r["received_date"], r["sender"], r["subject"], r["body"]),
+                    build_few_shot_messages(r["received_date"], r["sender"], r["subject"], r["body"], version),
                     tokenize=False, add_generation_prompt=True,
                 )
                 for r in records
             ]
         else:  # zero-shot base model and agent use exactly the training prompt
-            prompts = [build_prompt(tok, r["received_date"], r["sender"], r["subject"], r["body"], max_prompt_tokens)
+            prompts = [build_prompt(tok, r["received_date"], r["sender"], r["subject"], r["body"], max_prompt_tokens, version)
                        for r in records]
         return generate_batch(model, tok, prompts, max_new_tokens=max_new_tokens, batch_size=batch_size)
 
@@ -298,7 +334,8 @@ def build_extractor(args: argparse.Namespace) -> Extractor:
         return rule_extractor
     if args.model is None:
         raise SystemExit(f"--model is required for --extractor {args.extractor}")
-    return model_extractor(args.extractor, args.model, args.batch_size, args.max_new_tokens, args.max_prompt_tokens)
+    return model_extractor(args.extractor, args.model, args.batch_size, args.max_new_tokens, args.max_prompt_tokens,
+                           args.prompt_version)
 
 
 def main() -> None:
@@ -311,6 +348,8 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-new-tokens", type=int, default=192)
     parser.add_argument("--max-prompt-tokens", type=int, default=640)
+    parser.add_argument("--prompt-version", type=int, default=None, choices=[1, 2],
+                        help="System prompt version (agent: defaults to the one in its run config; baselines: 1)")
     parser.add_argument("--results-dir", default="results")
     args = parser.parse_args()
 

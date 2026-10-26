@@ -15,14 +15,22 @@ from typing import Any, Optional
 
 from inboxrl.agent import DEFAULT_BASE_MODEL, generate_batch, load_model
 from inboxrl.demo.ics import save_ics_file
+from inboxrl.evaluate import adapter_settings
 from inboxrl.prompts import build_prompt
 from inboxrl.schema import Event, parse_completion
 
 
-def extract_events(model: Any, tokenizer: Any, emails: list[dict[str, Any]], batch_size: int = 8) -> list[list[Event]]:
-    """Run the policy on email records ({received_date, sender, subject, body}); invalid outputs give []."""
-    prompts = [build_prompt(tokenizer, e["received_date"], e["sender"], e["subject"], e["body"]) for e in emails]
-    completions = generate_batch(model, tokenizer, prompts, batch_size=batch_size)
+def extract_events(
+    model: Any, tokenizer: Any, emails: list[dict[str, Any]], batch_size: int = 8, prompt_version: int = 1,
+    max_prompt_tokens: int = 640, max_new_tokens: int = 192,
+) -> list[list[Event]]:
+    """Run the policy on email records ({received_date, sender, subject, body}); invalid outputs give [].
+
+    The prompt version and token limits must be the ones the adapter was trained with (see `adapter_settings`).
+    """
+    prompts = [build_prompt(tokenizer, e["received_date"], e["sender"], e["subject"], e["body"], max_prompt_tokens,
+                            prompt_version) for e in emails]
+    completions = generate_batch(model, tokenizer, prompts, max_new_tokens=max_new_tokens, batch_size=batch_size)
     return [parse_completion(c) or [] for c in completions]
 
 
@@ -78,7 +86,8 @@ def main() -> None:
     else:
         model, tok = load_model(adapter_path=args.model_path, device=args.device)
 
-    per_email = extract_events(model, tok, emails, batch_size=args.batch_size)
+    settings = {} if args.base_only else adapter_settings(args.model_path)
+    per_email = extract_events(model, tok, emails, batch_size=args.batch_size, **settings)
     all_events = dedupe([ev for evs in per_email for ev in evs])
 
     if args.text:

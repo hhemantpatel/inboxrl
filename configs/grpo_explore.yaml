@@ -1,0 +1,9 @@
+# Variant aimed at the stalled stage 2 seen in main_s0 (entropy collapse, 55-90% zero-variance groups):
+# larger groups and higher temperature keep exploration alive.
+base: configs/grpo_qwen05b_4gb.yaml
+temperature: 1.0
+num_generations: 8
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 4   # 4 prompts x 8 completions per step
+max_steps: 600
+curriculum_stage1_steps: 200

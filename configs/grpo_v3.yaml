@@ -1,0 +1,12 @@
+# v3: fixes the abstention collapse seen in v2_s0. With the v2 prompt the policy first over-abstained
+# (`[]` on 56-81% of emails, steps 5-35), then flipped to "always extract" by step 45 and never again produced `[]`
+# on a no-event email (0 correct over steps 45-250): once P([]) ~ 0 no group contains a `[]` sample, so GRPO cannot
+# recover. Remedy: balance the two decisions (50% no-event prompts) and make a correct `[]` worth as much as a
+# perfect extraction (w_empty 1 -> 2: `[]` on a no-event email = 2.5 = perfect event email; hallucinating = -1.5).
+base: configs/grpo_v2.yaml
+no_event_fraction: 0.5
+reward_params:
+  date_closeness: 0.5
+  w_empty: 2.0
+max_steps: 500
+curriculum_stage1_steps: 100

@@ -55,3 +55,41 @@ def test_ics_uses_ist_and_stable_uids():
     start = vevents[0].decoded("DTSTART")
     assert str(start.tzinfo) == "Asia/Kolkata" and start.hour == 10
     assert cal.walk("VTIMEZONE"), "a VTIMEZONE block should be embedded"
+
+
+# ---------------------------------------------------------------- v2 prompt / no-event oversampling ----
+
+def test_v2_prompt_is_selectable_and_v1_unchanged():
+    from inboxrl.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_V2, build_chat_messages
+
+    v1 = build_chat_messages("2026-10-01", "a@iitj.ac.in", "s", "b")
+    v2 = build_chat_messages("2026-10-01", "a@iitj.ac.in", "s", "b", version=2)
+    assert v1[0]["content"] == SYSTEM_PROMPT
+    assert v2[0]["content"] == SYSTEM_PROMPT_V2 and "[]" in SYSTEM_PROMPT_V2
+
+
+def test_no_event_fraction_oversamples_and_default_is_unchanged():
+    import random as _random
+
+    from inboxrl.train_grpo import build_train_rows
+
+    rows = [{"gold": [], "level": 1 + i % 2} for i in range(20)] + \
+           [{"gold": [{"title": "t", "type": "exam", "date": "2026-10-12"}], "level": 1 + i % 2} for i in range(180)]
+    base_cfg = {"use_curriculum": True, "curriculum_stage1_steps": 10, "curriculum_stage1_levels": [1, 2]}
+    plain = build_train_rows(rows, [], base_cfg, 4, 50, seed=0)
+    boosted = build_train_rows(rows, [], {**base_cfg, "no_event_fraction": 0.3}, 4, 50, seed=0)
+    frac = lambda rs: sum(not r["gold"] for r in rs) / len(rs)
+    assert len(plain) == len(boosted) == 200
+    assert frac(plain) < 0.2 and 0.27 <= frac(boosted) <= 0.33
+
+
+def test_adapter_settings_prefers_inboxrl_json(tmp_path):
+    from inboxrl.evaluate import adapter_settings
+
+    run = tmp_path / "run"
+    (run / "adapter").mkdir(parents=True)
+    assert adapter_settings(str(run / "adapter"))["prompt_version"] == 1  # old adapters: v1 defaults
+    (run / "config.yaml").write_text("prompt_version: 2\nmax_prompt_tokens: 768\nmax_completion_length: 320\n")
+    assert adapter_settings(str(run / "adapter")) == {"prompt_version": 2, "max_prompt_tokens": 768, "max_new_tokens": 320}
+    (run / "adapter" / "inboxrl.json").write_text('{"prompt_version": 1, "max_prompt_tokens": 640}')
+    assert adapter_settings(str(run / "adapter"))["prompt_version"] == 1

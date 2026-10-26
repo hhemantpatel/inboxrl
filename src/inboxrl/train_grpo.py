@@ -27,6 +27,8 @@ from trl import GRPOConfig, GRPOTrainer
 
 from inboxrl.prompts import build_prompt
 from inboxrl.rewards import (
+    RewardWeights,
+    make_reward_funcs,
     reward_func_empty,
     reward_func_format,
     reward_func_len,
@@ -50,10 +52,14 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def to_prompt_rows(records: list[dict[str, Any]], tokenizer: Any, max_prompt_tokens: int) -> list[dict[str, Any]]:
+def to_prompt_rows(
+    records: list[dict[str, Any]], tokenizer: Any, max_prompt_tokens: int, prompt_version: int = 1
+) -> list[dict[str, Any]]:
     return [
         {
-            "prompt": build_prompt(tokenizer, r["received_date"], r["sender"], r["subject"], r["body"], max_prompt_tokens),
+            "prompt": build_prompt(
+                tokenizer, r["received_date"], r["sender"], r["subject"], r["body"], max_prompt_tokens, prompt_version
+            ),
             "gold": r["gold"],
             "level": r.get("level", 0),
         }
@@ -88,10 +94,26 @@ def build_train_rows(
     rng = random.Random(seed)
     total = prompts_per_step * max_steps
     real_frac = cfg.get("real_mix_fraction", 0.0) if real_rows else 0.0
+    empty_frac = cfg.get("no_event_fraction")
+
+    def draw(pool: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
+        """n rows from `pool`; with `no_event_fraction` set, that share is no-event emails.
+
+        The base model never answers `[]`, so at the natural ~15% rate most groups of a no-event prompt contain no
+        `[]` sample and carry no signal. Oversampling them gives the rare `[]` samples more chances to be rewarded.
+        """
+        if empty_frac is None:
+            return _cycle(pool, n, rng)
+        empty = [r for r in pool if not validate_gold(r["gold"])]
+        full = [r for r in pool if validate_gold(r["gold"])]
+        n_empty = int(round(n * empty_frac)) if empty else 0
+        out = _cycle(empty, n_empty, rng) + _cycle(full, n - n_empty, rng)
+        rng.shuffle(out)
+        return out
 
     def mixture(n: int) -> list[dict[str, Any]]:
         n_real = int(round(n * real_frac))
-        mixed = _cycle(rows, n - n_real, rng) + (_cycle(real_rows, n_real, rng) if n_real else [])
+        mixed = draw(rows, n - n_real) + (_cycle(real_rows, n_real, rng) if n_real else [])
         rng.shuffle(mixed)
         return mixed
 
@@ -104,7 +126,17 @@ def build_train_rows(
     if not easy:
         raise ValueError(f"No training rows with levels {sorted(easy_levels)} for curriculum stage 1")
     n1 = stage1_steps * prompts_per_step
-    return _cycle(easy, n1, rng) + mixture(total - n1)
+    return draw(easy, n1) + mixture(total - n1)
+
+
+def load_config(path: Path) -> dict[str, Any]:
+    """Read a YAML config; `base: other.yaml` inherits (recursively) from another config, keys here win."""
+    with open(path, encoding="utf-8") as f:
+        cfg: dict[str, Any] = yaml.safe_load(f) or {}
+    if "base" in cfg:
+        parent = load_config(Path(cfg.pop("base")))
+        cfg = {**parent, **cfg}
+    return cfg
 
 
 def pick_precision() -> dict[str, Any]:
@@ -178,12 +210,13 @@ def train(cfg: dict[str, Any], run_name: str, smoke_test: bool = False, promote:
     train_records = load_jsonl(Path(cfg["data_path"]))
     if smoke_test:
         train_records = train_records[:16]
-    rows = to_prompt_rows(train_records, tokenizer, max_prompt_tokens)
+    prompt_version = int(cfg.get("prompt_version", 1))
+    rows = to_prompt_rows(train_records, tokenizer, max_prompt_tokens, prompt_version)
 
     real_rows: list[dict[str, Any]] = []
     real_path = cfg.get("real_train_path")
     if real_path and Path(real_path).exists() and not smoke_test:
-        real_rows = to_prompt_rows(load_jsonl(Path(real_path)), tokenizer, max_prompt_tokens)
+        real_rows = to_prompt_rows(load_jsonl(Path(real_path)), tokenizer, max_prompt_tokens, prompt_version)
         print(f"[inboxrl] mixing {len(real_rows)} real training emails at fraction {cfg.get('real_mix_fraction', 0.0)}")
 
     num_generations = int(cfg.get("num_generations", 4))
@@ -204,8 +237,10 @@ def train(cfg: dict[str, Any], run_name: str, smoke_test: bool = False, promote:
     eval_samples = int(cfg.get("eval_samples", 32))
     if cfg.get("val_data_path") and eval_samples > 0:
         val_records = load_jsonl(Path(cfg["val_data_path"]))[:eval_samples]
-        eval_dataset = Dataset.from_list(to_prompt_rows(val_records, tokenizer, max_prompt_tokens))
+        eval_dataset = Dataset.from_list(to_prompt_rows(val_records, tokenizer, max_prompt_tokens, prompt_version))
 
+    # `reward_params` overrides RewardWeights fields (e.g. date_closeness); empty -> the original reward.
+    reward_funcs = make_reward_funcs(RewardWeights(**cfg.get("reward_params", {})))
     reward_weights = list(cfg.get("reward_weights", DEFAULT_REWARD_WEIGHTS))
     if len(reward_weights) != len(REWARD_FUNCS):
         raise ValueError(f"reward_weights needs {len(REWARD_FUNCS)} entries (total, format, match, empty, len)")
@@ -256,7 +291,7 @@ def train(cfg: dict[str, Any], run_name: str, smoke_test: bool = False, promote:
 
     trainer = GRPOTrainer(
         model=load_policy(cfg, precision["dtype"]),
-        reward_funcs=REWARD_FUNCS,
+        reward_funcs=reward_funcs,
         args=grpo_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
@@ -283,6 +318,11 @@ def train(cfg: dict[str, Any], run_name: str, smoke_test: bool = False, promote:
             shutil.rmtree(FINAL_ADAPTER_DIR)
         shutil.copytree(adapter_dir, FINAL_ADAPTER_DIR)
         (FINAL_ADAPTER_DIR / "TRAINED_BY.txt").write_text(f"run: {run_name}\nconfig: see runs/{run_name}/config.yaml\n")
+        (FINAL_ADAPTER_DIR / "inboxrl.json").write_text(json.dumps({
+            "prompt_version": int(cfg.get("prompt_version", 1)),
+            "max_prompt_tokens": int(cfg.get("max_prompt_tokens", 640)),
+            "max_completion_length": int(cfg.get("max_completion_length", 192)),
+        }))
         print(f"[inboxrl] promoted to {FINAL_ADAPTER_DIR}")
     return adapter_dir
 
@@ -299,12 +339,7 @@ def main() -> None:
     args = parser.parse_args()
 
     config_path = Path(args.config)
-    with open(config_path, encoding="utf-8") as f:
-        cfg: dict[str, Any] = yaml.safe_load(f) or {}
-    # Ablation configs can inherit from a base config: `base: configs/grpo_qwen05b_4gb.yaml`
-    if "base" in cfg:
-        with open(cfg.pop("base"), encoding="utf-8") as f:
-            cfg = {**(yaml.safe_load(f) or {}), **cfg}
+    cfg = load_config(config_path)
 
     if args.seed is not None:
         cfg["seed"] = args.seed

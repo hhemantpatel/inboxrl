@@ -1,0 +1,45 @@
+{
+  "name": "grpo_v6_s0",
+  "split": "synth_test",
+  "total_samples": 300,
+  "valid_json_ratio": 0.98,
+  "mean_reward": 1.8324627707018062,
+  "total_pred_events": 295,
+  "total_gold_events": 306,
+  "true_positive_events": 210,
+  "event_precision": 0.711864406779661,
+  "event_recall": 0.6862745098039216,
+  "event_f1": 0.6988352745424292,
+  "event_f1_ci": [
+    0.6462521223823949,
+    0.7512216330858962
+  ],
+  "date_accuracy": 0.7745098039215687,
+  "date_accuracy_ci": [
+    0.7251635716073827,
+    0.8225898995240614
+  ],
+  "paired_date_acc": 0.8088737201365188,
+  "paired_time_acc": 0.7542662116040956,
+  "paired_type_acc": 0.9146757679180887,
+  "paired_title_f1": 0.831367513790722,
+  "exact_match_ratio": 0.59,
+  "no_event_samples": 40,
+  "no_event_accuracy": 1.0,
+  "no_event_invalid_rate": 0.0,
+  "hallucination_rate_on_empty": 0.0,
+  "level_f1": {
+    "1": 1.0,
+    "2": 0.9690721649484536,
+    "3": 0.3529411764705882,
+    "4": 0.6063829787234043,
+    "5": 0.6415094339622641
+  },
+  "level_rewards": {
+    "1": 2.272615293865294,
+    "2": 2.116765873015873,
+    "3": 1.3143749999999998,
+    "4": 1.7975744442157486,
+    "5": 1.6609832424121151
+  }
+}

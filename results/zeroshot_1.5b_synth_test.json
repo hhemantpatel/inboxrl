@@ -1,0 +1,45 @@
+{
+  "name": "zeroshot_1.5b",
+  "split": "synth_test",
+  "total_samples": 300,
+  "valid_json_ratio": 0.9733333333333334,
+  "mean_reward": 1.3730251954835286,
+  "total_pred_events": 299,
+  "total_gold_events": 306,
+  "true_positive_events": 179,
+  "event_precision": 0.5986622073578596,
+  "event_recall": 0.5849673202614379,
+  "event_f1": 0.5917355371900828,
+  "event_f1_ci": [
+    0.5358808954203691,
+    0.6492680239825427
+  ],
+  "date_accuracy": 0.7091503267973857,
+  "date_accuracy_ci": [
+    0.6449316560420455,
+    0.777787558685446
+  ],
+  "paired_date_acc": 0.8346153846153846,
+  "paired_time_acc": 0.8153846153846154,
+  "paired_type_acc": 0.8038461538461539,
+  "paired_title_f1": 0.7029566800720647,
+  "exact_match_ratio": 0.38666666666666666,
+  "no_event_samples": 40,
+  "no_event_accuracy": 0.075,
+  "no_event_invalid_rate": 0.0,
+  "hallucination_rate_on_empty": 0.925,
+  "level_f1": {
+    "1": 0.7818181818181819,
+    "2": 0.7155963302752293,
+    "3": 0.4247787610619469,
+    "4": 0.5325443786982248,
+    "5": 0.5384615384615384
+  },
+  "level_rewards": {
+    "1": 1.793611111111111,
+    "2": 1.5644775132275133,
+    "3": 1.2114610042735043,
+    "4": 1.093944404361071,
+    "5": 1.2016319444444443
+  }
+}

@@ -1,0 +1,5 @@
+# v5: v4 with a weaker KL anchor (beta 0.3 -> 0.15). v4_s0 kept `[]` alive (no-event accuracy 40/40) but its
+# 12h->24h time conversion got worse than the beta=0.04 runs (start_time wrong on 18/60 L1 emails vs 3/60), which
+# suggests that beta=0.3 holds the policy too close to the base model. beta=0.04 collapsed (v2), 0.3 is stable (v4).
+base: configs/grpo_v4.yaml
+beta: 0.15

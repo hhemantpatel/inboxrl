@@ -1,0 +1,18 @@
+# v2: targets the three failure modes found in the first runs (explore_s0 analysis, 300 synthetic test emails):
+#  1. no-event emails: the base model never answers `[]` (0/40), so GRPO never samples it and the policy
+#     hallucinates an event for 40/40 of them  -> v2 system prompt with `[]` examples + 30% no-event prompts
+#  2. relative dates ("this/next Friday"): 34/60 L3 emails get a wrong date and groups carry no signal
+#     -> date verifier gives distance-decayed partial credit to near-miss dates
+#  3. long digests (L4) are cut off at 192 tokens: 11/60 invalid JSON -> compact one-line JSON, 320-token limit
+base: configs/grpo_explore.yaml
+prompt_version: 2
+max_prompt_tokens: 768
+max_completion_length: 320
+no_event_fraction: 0.3
+reward_params:
+  date_closeness: 0.5
+max_steps: 700
+curriculum_stage1_steps: 150
+# same 4 prompts x 8 completions per step as grpo_explore, but smaller micro-batches: sequences are ~1.5x longer
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 8

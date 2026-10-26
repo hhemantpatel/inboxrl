@@ -1,0 +1,7 @@
+# v6: v5 with 40% no-event prompts (was 30%). v5_s0 trained fine (F1 72.2, no-event 40/40) but v5_s1 (same config,
+# seed 1) lost `[]` entirely between steps 35 and 50 (share of `[]` completions 0.69 -> 0.00, mean completion length
+# 15 -> 65 tokens, never recovered; stopped at step 153). With groups of 4, a no-event prompt on which every sample
+# is `[]` has zero advantage, so only the hallucination penalty on the remaining no-event prompts keeps `[]` alive;
+# more such prompts strengthen it. v3 (50% + w_empty 2) overshot to always-`[]`, so w_empty stays at its default.
+base: configs/grpo_v5.yaml
+no_event_fraction: 0.4
