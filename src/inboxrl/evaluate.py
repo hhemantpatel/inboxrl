@@ -1,5 +1,28 @@
 """Evaluation harness: run an extractor over a split and compute metrics with bootstrap CIs.
 
+Evaluation Methodology vs Training Reward:
+    During GRPO training, the model is guided by a dense composite surrogate reward (including
+    partial credit for near-miss dates, fuzzy location overlap, and format validity).
+    In contrast, the evaluation harness strictly measures production-grade extraction accuracy:
+
+    1. Bipartite Event Pairing:
+       For each email with predictions P and ground truth G, an optimal bipartite matching is
+       computed maximizing alignment score S(p, g) = 0.5 * (date_match) + 0.5 * title_token_f1(p, g).
+    2. True Positive (TP) Criteria:
+       A matched pair (p, g) is declared a True Positive if and only if:
+           - The extracted date exactly matches the gold date (p.date == g.date), AND
+           - The bag-of-tokens title overlap satisfies title_token_f1(p.title, g.title) >= 0.5.
+    3. Micro Event Metrics:
+       - Precision = sum(TP) / sum(|P|)
+       - Recall    = sum(TP) / sum(|G|)
+       - Event F1  = 2 * Precision * Recall / (Precision + Recall)
+    4. Exact Match Ratio:
+       Fraction of emails where |P| == |G| and all matched events have identical date,
+       start_time, and event_type with zero hallucinations or omissions.
+    5. Non-Parametric Bootstrap Confidence Intervals:
+       95% confidence intervals are computed via empirical bootstrapping (B=1000 resamples
+       with replacement over test email instances), deriving the 2.5% and 97.5% percentiles.
+
 Usage:
     python -m inboxrl.evaluate --extractor rule --split synth_test
     python -m inboxrl.evaluate --extractor zero-shot --model Qwen/Qwen2.5-0.5B-Instruct --split real_test
