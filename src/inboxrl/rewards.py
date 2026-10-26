@@ -1,4 +1,33 @@
-"""Reward functions and Hungarian bipartite matching for InboxRL."""
+"""Reward functions and Hungarian bipartite matching for InboxRL.
+
+Problem Formulation & Permutation Invariance:
+    Extracting calendar events from unstructured email text requires emitting a JSON
+    array of structured Event schemas: [Event_1, Event_2, ...]. Because a predicted list
+    is an unordered set of events, index-by-index comparison (e.g. matching pred[0] to gold[0])
+    would artificially penalize valid permutations (e.g., [e_B, e_A] vs gold [e_A, e_B]).
+
+    To achieve permutation invariance, InboxRL frames event alignment as a Maximum Weight
+    Bipartite Matching problem between predicted events P = {p_1, ..., p_m} and ground-truth
+    events G = {g_1, ..., g_n}. We solve for the optimal bijection:
+        pi* = argmax_{pi} sum_{(i, j) in pi} S(p_i, g_j)
+    using the Kuhn-Munkres (Hungarian) algorithm in O(max(m, n)^3) time.
+
+Reward Decomposition:
+    The overall scalar reward R is a weighted sum of four orthogonal signals:
+        R_total = w_format * R_format + w_match * R_match + w_empty * R_empty + w_len * R_len
+
+    1. Format Validity (R_format):
+       +1.0 if the output strictly parses into valid Event JSON schemas; -1.0 otherwise.
+    2. Hungarian Match (R_match):
+       Normalized bipartite similarity: sum_{(i,j) in pi*} S(p_i, g_j) / max(|P|, |G|).
+       Dividing by max(|P|, |G|) simultaneously penalizes false positives (hallucinations)
+       and false negatives (missed events).
+    3. Empty Event Precision/Recall (R_empty):
+       +1.0 for correctly emitting [] on non-event emails, -1.0 for hallucinating events on
+       empty emails, and -0.5 for emitting [] when events were actually present.
+    4. Length & Cleanliness Penalty (R_len):
+       -1.0 if conversational fluff exists outside the JSON payload; -0.5 if length exceeds max_chars.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +45,25 @@ from inboxrl.schema import Event, extract_json_payload, parse_completion
 
 @dataclass
 class RewardWeights:
+    """Hyperparameters and sub-field weights for the composite RL reward function.
+
+    Attributes:
+        w_format: Weight for JSON syntactic validity (+1.0 / -1.0).
+        w_match: Weight for bipartite Hungarian event matching.
+        w_empty: Weight for empty-email precision/recall reward.
+        w_len: Weight for brevity and zero-fluff text penalty.
+        w_date: Relative weight for ISO date agreement (YYYY-MM-DD).
+        w_time: Relative weight for start time match (HH:MM or None).
+        w_title: Relative weight for title token-level F1 overlap.
+        w_type: Relative weight for event category agreement.
+        w_loc: Relative weight for fuzzy location string similarity.
+        wrong_date_factor: Gating factor applied to non-date similarities when date is wrong.
+            Because an event scheduled on the wrong date is calendar-useless, wrong dates
+            cap non-date field credit to wrong_date_factor * sum(non-date weights).
+        max_chars: Character limit before length penalty kicks in.
+        date_closeness: Partial credit ceiling for near-miss dates (linear decay).
+        date_horizon_days: Maximum date deviation (days) eligible for partial credit.
+    """
     w_format: float = 0.5
     w_match: float = 2.0
     w_empty: float = 1.0
@@ -130,8 +178,20 @@ def compute_hungarian_match_score(
 ) -> tuple[float, int]:
     """Compute normalized bipartite match score using the Hungarian algorithm.
 
+    Mathematical Formulation:
+        Let P = {p_1, ..., p_m} be predicted events and G = {g_1, ..., g_n} be gold events.
+        1. Construct similarity matrix S in [0, 1]^{m x n} where S_{i, j} = _event_similarity(p_i, g_j).
+        2. Convert to cost matrix C_{i, j} = 1.0 - S_{i, j} for minimum weight assignment.
+        3. Solve Kuhn-Munkres: (row_ind, col_ind) = linear_sum_assignment(C).
+        4. Normalize total matched similarity by max(m, n):
+               r_match = (sum_{k} S_{row[k], col[k]}) / max(m, n)
+           This normalization strictly bounds r_match in [0, 1] while penalizing both
+           hallucinated events (when m > n) and omitted events (when m < n).
+
     Returns:
-        (r_match, num_matched)
+        tuple[float, int]:
+            - r_match: Normalized match reward in [0.0, 1.0].
+            - num_matched: Count of matched pairs with high semantic similarity (S >= 0.5).
     """
     n_pred = len(preds)
     n_gold = len(golds)
