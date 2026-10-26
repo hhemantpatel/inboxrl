@@ -57,16 +57,9 @@ data/real/names_to_mask.txt
 *.kdbx
 *.key
 
-# LaTeX build files
-report/*.aux
-report/*.bbl
-report/*.blg
-report/*.fdb_latexmk
-report/*.fls
-report/*.log
-report/*.out
-report/*.synctex.gz
-report/*.toc
+# Report & Assignment
+report/
+AI_Assignment2*.pdf
 
 # IDE / OS
 .DS_Store
